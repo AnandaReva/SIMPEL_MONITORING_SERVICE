@@ -1,0 +1,111 @@
+package process
+
+import (
+	"monitoring_service/crypto"
+	"monitoring_service/logger"
+	"monitoring_service/utils"
+	ws "monitoring_service/ws"
+	"github.com/jmoiron/sqlx"
+)
+
+/* // init hub WebSocket
+var hub = ws.NewWebSocketHub()
+
+// upgrader WebSocket
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+ */
+// Connect_device menghubungkan client dengan broker MQTT
+func Connect_device(reference_id string, conn *sqlx.DB, user_id int64, role string, param map[string]any) utils.ResultFormat {
+	result := utils.ResultFormat{
+		ErrorCode:    "000000",
+		ErrorMessage: "",
+		Payload:      make(map[string]any),
+	}
+
+	// Validasi device_id (harus string, sesuai clientID MQTT)
+	deviceName, ok := param["name"].(string)
+	if !ok || deviceName == "" {
+		logger.Error(reference_id, "ERROR - Connect_device - Missing / invalid device name")
+		result.ErrorCode = "400001"
+		result.ErrorMessage = "Invalid request"
+		return result
+	}
+
+	// Validasi password
+	password, ok := param["password"].(string)
+	if !ok || password == "" {
+		logger.Error(reference_id, "ERROR - Connect_device - Missing password")
+		result.ErrorCode = "400003"
+		result.ErrorMessage = "Invalid request"
+		return result
+	}
+
+	// Ambil credential dari database
+	var deviceSalt, deviceSaltedPasswordDb string
+	query := `SELECT salt, salted_password FROM device.unit WHERE id = $1`
+	err := conn.QueryRow(query, deviceName).Scan(&deviceSalt, &deviceSaltedPasswordDb)
+	if err != nil {
+		logger.Error(reference_id, "ERROR - Connect_device - Invalid device ID", err)
+		result.ErrorCode = "401000"
+		result.ErrorMessage = "Unauthorized"
+		return result
+	}
+
+	// Generate salted password
+	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, deviceSalt, 32, 1000)
+	if errSaltedPass != "" {
+		logger.Error(reference_id, "ERROR - Connect_device - Failed to generate salted password:", errSaltedPass)
+		result.ErrorCode = "500001"
+		result.ErrorMessage = "Internal server error"
+		return result
+	}
+
+	// Verifikasi password
+	if saltedPassword != deviceSaltedPasswordDb {
+		logger.Error(reference_id, "ERROR - Connect_device - Invalid password")
+		result.ErrorCode = "401001"
+		result.ErrorMessage = "Unauthorized"
+		return result
+	}
+
+	///////////////////////// SUCESS /////////////////////////
+
+	ws.Device_upgrader()
+
+
+
+	return result
+}
+
+
+
+
+
+
+/* 
+	// upgrade to ws
+	wsConn, err := upgrader.Upgrade()
+	if err != nil {
+		logger.Error(reference_id, "ERROR - Connect_device - websocket upgrade failed: ", err)
+		result.ErrorCode = "500002"
+		result.ErrorMessage = "Failed to upgrade to WebSocket"
+		return result
+	}
+
+	// Add connection to WebSocketHub
+	hub.AddClient(wsConn)
+
+	// Send response sucess to WebSocket
+	go func() {
+		message := []byte(`{"status": "connected", "device": "` + deviceName + `"}`)
+		err := wsConn.WriteMessage(websocket.TextMessage, message)
+		if err != nil {
+			logger.Error(reference_id, "ERROR - Connect_device - Failed to send WebSocket message:", err)
+		}
+	}()
+
+	// Kirim response sukses
+	result.Payload["status"] = "success"
+	logger.Info(reference_id, "SUCCESS - Device connected:", deviceName) */
