@@ -9,8 +9,8 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Register_device mendaftarkan perangkat baru ke dalam sistem
-func Register_device(referenceID string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+// Register_Device mendaftarkan perangkat baru ke dalam sistem
+func Register_Device(referenceID string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{
 		ErrorCode:    "000000",
 		ErrorMessage: "",
@@ -20,7 +20,7 @@ func Register_device(referenceID string, conn *sqlx.DB, userID int64, role strin
 	// Validasi device name
 	deviceName, ok := param["name"].(string)
 	if !ok || deviceName == "" || len(deviceName) > 20 {
-		logger.Error(referenceID, "ERROR - Register_device - Missing / invalid name: ", deviceName)
+		logger.Error(referenceID, "ERROR - Register_Device - Missing / invalid name: ", deviceName)
 		result.ErrorCode = "400001"
 		result.ErrorMessage = "Invalid request"
 
@@ -30,7 +30,7 @@ func Register_device(referenceID string, conn *sqlx.DB, userID int64, role strin
 	// Validasi password
 	password, ok := param["password"].(string)
 	if !ok || password == "" {
-		logger.Error(referenceID, "ERROR - Register_device - Missing password")
+		logger.Error(referenceID, "ERROR - Register_Device - Missing password")
 		result.ErrorCode = "400003"
 		result.ErrorMessage = "Invalid request"
 

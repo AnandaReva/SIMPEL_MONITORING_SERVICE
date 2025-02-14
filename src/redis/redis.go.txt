@@ -1,0 +1,55 @@
+/* package redis
+
+import (
+	"context"
+	"fmt"
+	"monitoring_service/logger"
+
+	"github.com/redis/go-redis/v9"
+)
+
+var client *redis.Client
+
+func InitRedis(host, pass string, db int) (*redis.Client, error) {
+	logStr := fmt.Sprintf("InitRedis() Addr: %s, DB: %d", host, db)
+	logger.Debug("REDIS", "DEBUG - ", logStr)
+
+	client = redis.NewClient(&redis.Options{
+		Addr:     host,
+		Password: pass,
+		DB:       db,
+	})
+
+	_, err := client.Ping(context.Background()).Result()
+	if err != nil {
+		logger.Error("REDIS", "ERROR - Failed to connect to Redis", err)
+		return nil, err
+	}
+
+	logger.Info("REDIS", "INFO - Connected to Redis")
+	return client, nil
+}
+
+func SubscribeChannel(ctx context.Context, hub *WebSocketHub, channelName string) error {
+	logStr := fmt.Sprintf("Subscribing to channel: %s", channelName)
+	logger.Info("REDIS", "INFO - ", logStr)
+
+	sub := client.Subscribe(ctx, channelName)
+	ch := sub.Channel()
+
+	go func() {
+		for msg := range ch {
+			hub.BroadcastData([]byte(msg.Payload))
+		}
+	}()
+
+	return nil
+}
+
+func PublishToChannel(channelName, data string) error {
+	logStr := fmt.Sprintf("Publishing to channel: %s", channelName)
+	logger.Info("REDIS", "INFO - ", logStr)
+
+	return client.Publish(context.Background(), channelName, data).Err()
+}
+ */

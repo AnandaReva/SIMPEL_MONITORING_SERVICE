@@ -34,7 +34,7 @@ func initProcessMap() {
 	}
 
 	prcsMap["register_device"] = prcs{
-		function:  process.Register_device,
+		function:  process.Register_Device,
 		class:     "device",
 		Need_hash: false,
 	}
@@ -141,7 +141,7 @@ type UserInfo struct {
 			return
 		}
 
-		query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_secret FROM sysuser.user su 
+		query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_secret FROM sysuser.user su
 			LEFT JOIN sysuser.session ss ON su.id = ss.user_id WHERE ss.session_hash = $1`
 		err = conn.QueryRow(query, sessionID).Scan(&userInfo.UserID, &userInfo.UserRole, &userInfo.SessionHash)
 		if err != nil {
@@ -203,7 +203,7 @@ type UserInfo struct {
 	// Mengirim response berdasarkan hasil eksekusi proses
 	utils.Response(w, result)
 }
- */
+*/
 
 func Process(w http.ResponseWriter, r *http.Request) {
 	var ctxKey HTTPContextKey = "requestID"
@@ -328,4 +328,3 @@ func Process(w http.ResponseWriter, r *http.Request) {
 	// Mengirim response berdasarkan hasil eksekusi proses
 	utils.Response(w, result)
 }
-

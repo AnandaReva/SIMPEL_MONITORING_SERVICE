@@ -5,8 +5,11 @@ set DBHOST=localhost
 set DBUSER=revaananda
 set DBPASS=qwerqwer
 set DBPORT=5432
-set DBNAME=tubes
+set DBNAME=simple
 
+set RDHOST=localhost:6379
+set RDPASS=qwerqwer
+set RDDB=0
 
 //linux
 export DBDRIVER=postgres

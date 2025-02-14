@@ -10,6 +10,7 @@ import (
 	"monitoring_service/db"
 	"monitoring_service/handlers"
 	"monitoring_service/logger"
+	"monitoring_service/pubsub"
 	"monitoring_service/utils"
 )
 
@@ -110,6 +111,7 @@ func main() {
 		logger.Error("DBPASS environment variable is required")
 	}
 
+	logger.Info("MAIN", "-----------POSTGRESQL CONF : ")
 	logger.Info("MAIN", "DBDRIVER : ", DBDRIVER)
 	logger.Info("MAIN", "DBHOST : ", DBHOST)
 	logger.Info("MAIN", "DBPORT : ", DBPORT)
@@ -117,6 +119,29 @@ func main() {
 	logger.Debug("MAIN", "DBPASS : ", DBPASS)
 	logger.Info("MAIN", "DBNAME : ", DBNAME)
 	logger.Info("MAIN", "DBPOOLSIZE : ", DBPOOLSIZE)
+
+	logger.Info("MAIN", "-----------REDIS CONF : ")
+	// log redis conf
+	RDHOST := os.Getenv("RDHOST")
+	RDPASS := os.Getenv("RDPASS")
+	RDDB, errConv := strconv.Atoi(os.Getenv("RDDB"))
+
+	if len(RDHOST) == 0 {
+		logger.Error("RDHOST environment variable is required")
+	}
+
+	if len(RDPASS) == 0 {
+		logger.Error("RDPASS environment variable is required")
+	}
+
+	if errConv != nil {
+		logger.Warning("MAIN", "Failed to parse RDDB, using default (0), reason: ", errConv)
+		RDDB = 0 // Default to 0 if parsing fails
+	}
+
+	logger.Info("MAIN", "RDHOST : ", RDHOST)
+	logger.Info("MAIN", "RDPASS : ", RDPASS)
+	logger.Info("MAIN", "RDDB : ", RDDB)
 
 	err = db.InitDB(DBDRIVER, DBHOST, DBPORT, DBUSER, DBPASS, DBNAME, DBPOOLSIZE)
 	if err != nil {
@@ -126,11 +151,19 @@ func main() {
 		logger.Info("MAIN", "Database Connection Pool Initated.")
 	}
 
+	// Inisialisasi Redis hanya di main
+
+	if err := pubsub.InitRedisConn(RDHOST, RDPASS, RDDB); err != nil {
+		logger.Error("MAIN", "ERROR - Redis connection failed:", err)
+		os.Exit(1)
+	}
+
 	paths["/"] = handlers.Greeting
 	// send requestID and db conn as parameter
 	paths["/process"] = handlers.Process
 
-	paths["/device-connect"] = handlers.Device_Conn_WS
+	paths["/device-connect"] = handlers.Device_Create_Conn
+	//paths["/device-disconnect"] = handlers.Device_Create_Conn
 
 	// Register endpoints with a multiplexer
 	mux := http.NewServeMux()

@@ -57,26 +57,21 @@ func ReleaseConnection() {
 	}
 }
 
-// InitDB initializes the database connection pool with the provided parameters.
-// It sets up connection settings like the maximum number of open/idle connections
-// and the connection lifetime.
+
 func InitDB(driver string, host string, port int, user string, password string, dbname string, poolSize int) error {
 	var err error
 
-	// Create the connection string using the provided parameters
-//	connStr := fmt.Sprintf("%s://%s:%s@%s:%d/%s", driver, user, password, host, port, dbname)
-connStr := fmt.Sprintf("%s://%s:%s@%s:%d/%s?sslmode=disable", driver, user, password, host, port, dbname)
+	//	connStr := fmt.Sprintf("%s://%s:%s@%s:%d/%s", driver, user, password, host, port, dbname)
+	connStr := fmt.Sprintf("%s://%s:%s@%s:%d/%s?sslmode=disable", driver, user, password, host, port, dbname)
 	// Log the connection string for debugging (ensure this does not log sensitive info in production)
 	logger.Debug("DB", "CONNSTR : ", connStr)
-
-	// Establish a new database connection using the driver and connection string
 	dbpool.db, err = sqlx.Connect(driver, connStr)
 	if err != nil {
 		// If connection fails, return the error
 		return err
 	}
 
-	// Set the maximum number of open and idle connections in the pool
+
 	dbpool.db.SetMaxOpenConns(poolSize)
 	dbpool.db.SetMaxIdleConns(poolSize)
 
