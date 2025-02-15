@@ -4,14 +4,18 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
+	"monitoring_service/configs"
 	"monitoring_service/db"
 	"monitoring_service/handlers"
 	"monitoring_service/logger"
 	"monitoring_service/pubsub"
 	"monitoring_service/utils"
+	"monitoring_service/worker"
 )
 
 func generateReferenceID(timer int64) string {
@@ -68,6 +72,30 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// runWorker menjalankan worker dengan interval tertentu dan menangani graceful shutdown
+func runWorker(interval time.Duration) chan struct{} {
+
+	logger.Info("MAIN", "RUNING WORKER")
+	stopChan := make(chan struct{})
+
+	// Menjalankan worker dalam goroutine
+	go worker.StartRedisToDBWorker(interval, stopChan)
+
+	// Menangani sinyal sistem untuk shutdown yang aman
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+
+		logger.Info("MAIN", "Shutting down worker...")
+
+		close(stopChan) // Menghentikan worker saat aplikasi ditutup
+	}()
+
+	return stopChan
+}
+
 func main() {
 
 	paths := make(map[string]func(http.ResponseWriter, *http.Request))
@@ -92,7 +120,7 @@ func main() {
 	}
 
 	if len(DBDRIVER) == 0 {
-		logger.Error("DBDRIVER environment variable is required")
+		logger.Error("MAIN", "DBDRIVER environment variable is required")
 	}
 
 	if len(DBNAME) == 0 {
@@ -143,6 +171,7 @@ func main() {
 	logger.Info("MAIN", "RDPASS : ", RDPASS)
 	logger.Info("MAIN", "RDDB : ", RDDB)
 
+	///////////////////////////////// POSTGRESQL ///////////////////////////////
 	err = db.InitDB(DBDRIVER, DBHOST, DBPORT, DBUSER, DBPASS, DBNAME, DBPOOLSIZE)
 	if err != nil {
 		logger.Error("MAIN", "ERROR !!! FAILED TO INITIATE DB POOL..", err)
@@ -151,12 +180,21 @@ func main() {
 		logger.Info("MAIN", "Database Connection Pool Initated.")
 	}
 
+	///////////////////////////////// REDIS ///////////////////////////////
 	// Inisialisasi Redis hanya di main
 
 	if err := pubsub.InitRedisConn(RDHOST, RDPASS, RDDB); err != nil {
 		logger.Error("MAIN", "ERROR - Redis connection failed:", err)
 		os.Exit(1)
 	}
+
+	///////////////////////////////// WORKER ///////////////////////////////
+
+	interval := configs.GetWorkerInterval()
+
+	runWorker(time.Duration(interval) * time.Second)
+
+	//////////////////////////////// ////////////////////////////////
 
 	paths["/"] = handlers.Greeting
 	// send requestID and db conn as parameter

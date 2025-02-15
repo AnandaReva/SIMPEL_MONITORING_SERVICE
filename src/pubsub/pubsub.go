@@ -193,20 +193,49 @@ func (hub *WebSocketHub) SubscribeUserToDevice(userConn *websocket.Conn, deviceI
 	}()
 }
 
-// Device mengirimkan data ke channel Redis
+// DevicePublishToChannel mengirimkan data ke channel Redis
 func (hub *WebSocketHub) DevicePublishToChannel(referenceID string, deviceID int64, data string) error {
 	redisClient := GetRedisClient()
 	if redisClient == nil {
 		return fmt.Errorf("redis client is not initialized or failed to reconnect")
 	}
 
+	ctx := context.Background()
 	channelName := fmt.Sprintf("device:%d", deviceID)
 	logger.Info(referenceID, fmt.Sprintf("INFO - Publishing to channel: %s", channelName))
 
-	err := redisClient.Publish(context.Background(), channelName, data).Err()
+	// Publikasikan data ke channel Redis
+	err := redisClient.Publish(ctx, channelName, data).Err()
 	if err != nil {
 		logger.Error(referenceID, fmt.Sprintf("ERROR - Failed to publish to Redis: %v", err))
 		return err
 	}
+
+	/* !! lakukan di handler
+	 // Jika publish berhasil, simpan data ke buffer Redis
+	if err := PushDataToBuffer(ctx, data, referenceID); err != nil {
+		logger.Error(referenceID, fmt.Sprintf("ERROR - Failed to push data to buffer: %v", err))
+	} */
+
+	return nil
+}
+
+// PushDataToBuffer menyimpan data ke buffer di Redis
+func PushDataToBuffer(ctx context.Context, data string, referenceID string) error {
+	redisClient := GetRedisClient()
+	if redisClient == nil {
+		return fmt.Errorf("redis client is not initialized or failed to reconnect")
+	}
+
+	logger.Info(referenceID, "INFO - Pushing data to buffer")
+
+	// Simpan data ke buffer dengan RPUSH (FIFO)
+	err := redisClient.RPush(ctx, "buffer:device_data", data).Err()
+	if err != nil {
+		logger.Error(referenceID, fmt.Sprintf("ERROR - Failed to push data to buffer: %v", err))
+		return err
+	}
+
+	logger.Info(referenceID, "INFO - Data successfully pushed to buffer")
 	return nil
 }

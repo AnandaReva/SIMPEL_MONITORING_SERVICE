@@ -1,14 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
 	"monitoring_service/logger"
 	pubsub "monitoring_service/pubsub"
 	"monitoring_service/utils"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -164,10 +165,25 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			msgString := strconv.Itoa(messageType) + string(message)
+			// Format messageType (1 = Text, 2 = Binary)
+			msgTypeStr := "Unknown"
+			if messageType == 1 {
+				msgTypeStr = "Text"
+			} else if messageType == 2 {
+				msgTypeStr = "Binary"
+			}
 
 			// Log pesan yang diterima
-			logger.Info(referenceID, "INFO - Received WebSocket message: ", msgString)
+			logStr := fmt.Sprintf("Message Type: %s, Message: %s", msgTypeStr, string(message))
+			logger.Info(referenceID, "INFO - Received WebSocket: ", logStr)
+
+			msgString := string(message)
+
+			// Push data ke buffer Redis
+			err = pubsub.PushDataToBuffer(context.Background(), msgString, referenceID)
+			if err != nil {
+				logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
+			}
 
 			// Kirim data ke Redis
 			err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, msgString)

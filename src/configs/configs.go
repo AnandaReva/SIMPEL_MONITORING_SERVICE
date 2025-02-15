@@ -1,9 +1,14 @@
 package configs
 
+var workerInterval int16 = 8
+var limit int16 = 10
 
+// exp fetch config : configs.GetWorkerInterval()
 
-// exp fetch config : Config.redisScheduleTime
+func GetWorkerInterval() int16 {
+	return workerInterval
+}
 
-
-
-func GetConfig() () {}
+func GetWorkerLimit() int16 {
+	return limit
+}

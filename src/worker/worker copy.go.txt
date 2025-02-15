@@ -1,0 +1,201 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"monitoring_service/db"
+	"monitoring_service/logger"
+	"monitoring_service/pubsub"
+	"time"
+)
+
+// DeviceData sesuai dengan tabel device.data
+type DeviceData struct {
+	Device_Id    int64 // unit_id
+	Tstamp       int64 // epoch time
+	Voltage      float64
+	Current      float64
+	Power        float64
+	Energy       float64
+	Frequency    float64
+	Power_factor float64
+}
+
+// StartRedisToDBWorker menjalankan worker untuk memindahkan data dari Redis ke PostgreSQL secara periodik
+func StartRedisToDBWorker(interval time.Duration, dbSaveFunc func([]DeviceData) error, stopChan <-chan struct{}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	logger.Debug("WORKER", fmt.Sprintf("DEBUG - WORKED STARTED, interval: %v", interval))
+
+	for {
+		select {
+		case <-ticker.C:
+			logger.Info("WORKER", "INFO - Worker is checking Redis data...")
+			scanRedisBuffer(dbSaveFunc)
+
+		case <-stopChan:
+			logger.Info("WORKER", "INFO - Worker stopped")
+			return
+		}
+	}
+}
+
+
+func scanRedisBuffer(dbSaveFunc func([]DeviceData) error) error {
+	ctx := context.Background()
+	redisClient := pubsub.GetRedisClient()
+	if redisClient == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("failed to retrieve data from Redis: %w", err)
+	}
+
+	if len(data) == 0 {
+		logger.Info("WORKER", "INFO - No data found in Redis buffer")
+		return nil
+	}
+
+	var deviceDataList []DeviceData
+	for _, item := range data {
+		var deviceData DeviceData
+		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to parse JSON: %v", err))
+			continue
+		}
+		deviceDataList = append(deviceDataList, deviceData)
+	}
+
+	if len(deviceDataList) > 0 {
+		err = dbSaveFunc(deviceDataList)
+		if err != nil {
+			return fmt.Errorf("failed to save data to database: %w", err)
+		}
+	}
+
+	// Hapus data dari buffer setelah berhasil diproses
+	_, err = redisClient.Del(ctx, "buffer:device_data").Result()
+	if err != nil {
+		logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to delete buffer: %v", err))
+		return err
+	}
+
+	logger.Info("WORKER", "INFO - Successfully processed and deleted Redis buffer")
+	return nil
+}
+
+
+
+
+
+
+// SaveDeviceDataBatch menyimpan data sensor ke database PostgreSQL
+func SaveDeviceDataBatch(deviceData []DeviceData) error {
+	dbConn, err := db.GetConnection()
+	if err != nil {
+		return fmt.Errorf("failed to get DB connection: %w", err)
+	}
+	defer db.ReleaseConnection()
+
+	tx, err := dbConn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO device.data (unit_id, timestamp, voltage, current, power, energy, frequency, power_factor)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, data := range deviceData {
+		_, err := stmt.Exec(data.Device_Id, data.Tstamp, data.Voltage, data.Current, data.Power, data.Energy, data.Frequency, data.Power_factor)
+		if err != nil {
+			return fmt.Errorf("failed to execute statement: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+
+
+
+
+
+
+
+/* 
+
+// processData mengambil data dari Redis, memparsing JSON, lalu menyimpannya ke PostgreSQL
+func processData(dbSaveFunc func([]DeviceData) error) {
+	ctx := context.Background()
+	redisClient := pubsub.GetRedisClient()
+	if redisClient == nil {
+		logger.Error("WORKER", "ERROR - Redis client is not available")
+		return
+	}
+
+	// Ambil semua key sensor
+	keys, err := redisClient.Keys(ctx, "sensor:*").Result()
+	if err != nil {
+		logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to fetch keys: %v", err))
+		return
+	}
+
+	// Jika tidak ada data di Redis, log info dan return
+	if len(keys) == 0 {
+		logger.Info("WORKER", "INFO - No sensor data found in Redis")
+		return
+	}
+
+	var deviceDataBatch []DeviceData
+
+	for _, key := range keys {
+		// Ambil semua data dalam key
+		data, err := redisClient.LRange(ctx, key, 0, -1).Result()
+		if err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to get data from Redis key %s: %v", key, err))
+			continue
+		}
+
+		for _, jsonData := range data {
+			var deviceData DeviceData
+			if err := json.Unmarshal([]byte(jsonData), &deviceData); err != nil {
+				logger.Error("WORKER", fmt.Sprintf("ERROR - JSON Unmarshal error: %v", err))
+				continue
+			}
+			deviceDataBatch = append(deviceDataBatch, deviceData)
+		}
+
+		// Hapus data dari Redis setelah berhasil dibaca
+		if err := redisClient.Del(ctx, key).Err(); err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to delete key %s: %v", key, err))
+		}
+	}
+
+	// Simpan batch data ke PostgreSQL jika ada data yang ditemukan
+	if len(deviceDataBatch) > 0 {
+		if err := dbSaveFunc(deviceDataBatch); err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to save data to DB: %v", err))
+		} else {
+			logger.Info("WORKER", fmt.Sprintf("INFO - Successfully saved %d records to DB", len(deviceDataBatch)))
+		}
+	} else {
+		logger.Info("WORKER", "INFO - No valid sensor data found to save")
+	}
+}
+
+ */
