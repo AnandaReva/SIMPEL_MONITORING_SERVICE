@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,13 +74,16 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // runWorker menjalankan worker dengan interval tertentu dan menangani graceful shutdown
-func runWorker(interval time.Duration) chan struct{} {
-
-	logger.Info("MAIN", "RUNING WORKER")
+func runWorker(interval time.Duration, redisMemoryLimit int64) chan struct{} {
+	logger.Info("MAIN", "RUNNING WORKER")
 	stopChan := make(chan struct{})
+	var wg sync.WaitGroup // WaitGroup untuk menunggu worker selesai
 
-	// Menjalankan worker dalam goroutine
-	go worker.StartRedisToDBWorker(interval, stopChan)
+	wg.Add(1) // Tambah counter WaitGroup
+	go func() {
+		defer wg.Done() // Pastikan WaitGroup berkurang saat worker selesai
+		worker.StartRedisToDBWorker(interval, redisMemoryLimit, stopChan)
+	}()
 
 	// Menangani sinyal sistem untuk shutdown yang aman
 	sigChan := make(chan os.Signal, 1)
@@ -87,10 +91,15 @@ func runWorker(interval time.Duration) chan struct{} {
 
 	go func() {
 		<-sigChan
-
 		logger.Info("MAIN", "Shutting down worker...")
 
 		close(stopChan) // Menghentikan worker saat aplikasi ditutup
+
+		// Tunggu hingga worker benar-benar selesai sebelum keluar
+		wg.Wait()
+
+		logger.Info("MAIN", "Worker stopped, exiting program.")
+		os.Exit(0) // Keluar dengan status sukses
 	}()
 
 	return stopChan
@@ -159,7 +168,7 @@ func main() {
 	}
 
 	if len(RDPASS) == 0 {
-		logger.Error("RDPASS environment variable is required")
+		logger.Warning("RDPASS environment variable is required")
 	}
 
 	if errConv != nil {
@@ -190,9 +199,26 @@ func main() {
 
 	///////////////////////////////// WORKER ///////////////////////////////
 
-	interval := configs.GetWorkerInterval()
+	logger.Info("MAIN", "-----------WORKER CONF : ")
+	workerInterval := configs.GetWorkerInterval()
+	redisMemoryLimit := configs.GetRedisMemoryLimit()
 
-	runWorker(time.Duration(interval) * time.Second)
+	// Validasi workerInterval harus bertipe int16
+	if workerInterval < 1 {
+		logger.Warning("MAIN", "Invalid worker interval, using default: 30 seconds")
+		workerInterval = 30
+	}
+
+	// Validasi redisMemoryLimit harus bertipe int64
+	if redisMemoryLimit < 1 {
+		logger.Warning("MAIN", "Invalid Redis memory limit, using default: 50MB")
+	}
+
+	redisMemoryMB := redisMemoryLimit / (1024 * 1024)
+	logger.Info("MAIN", "WORKER INTERVAL (s):  : ", workerInterval)
+	logger.Info("MAIN", "REDIS MEMORY LIMIT (MB):  : ", redisMemoryMB)
+
+	runWorker(time.Duration(workerInterval)*time.Second, redisMemoryLimit)
 
 	//////////////////////////////// ////////////////////////////////
 

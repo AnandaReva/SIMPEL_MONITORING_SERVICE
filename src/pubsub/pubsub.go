@@ -211,12 +211,6 @@ func (hub *WebSocketHub) DevicePublishToChannel(referenceID string, deviceID int
 		return err
 	}
 
-	/* !! lakukan di handler
-	 // Jika publish berhasil, simpan data ke buffer Redis
-	if err := PushDataToBuffer(ctx, data, referenceID); err != nil {
-		logger.Error(referenceID, fmt.Sprintf("ERROR - Failed to push data to buffer: %v", err))
-	} */
-
 	return nil
 }
 

@@ -1,8 +1,8 @@
 package logger
 
 import (
-	"monitoring_service/configs"
 	"fmt"
+	"monitoring_service/configs"
 	"runtime"
 	"strconv"
 	"strings"
@@ -33,8 +33,8 @@ func getLogPrefix() string {
 	timestrs[0] = tstr[:29]
 	timestr = strings.Join(timestrs, "+")
 
-	version := configs.GetAppName()
-	appName := configs.GetVersion()
+	version := configs.GetVersion()
+	appName := configs.GetAppName()
 
 	// Retrieve caller information
 	funcName := ""
@@ -49,7 +49,8 @@ func getLogPrefix() string {
 		funcString = funcName + ":" + strconv.Itoa(line) + " - "
 	}
 
-	return timestr + " - " + appName + " - VERSION:" + version + " - " + funcString
+	return timestr + " - " + appName + " - VERSION: " + version + " - " + funcString
+
 }
 
 // Log functions for various levels

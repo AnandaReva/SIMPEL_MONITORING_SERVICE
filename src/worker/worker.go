@@ -7,6 +7,7 @@ import (
 	"monitoring_service/db"
 	"monitoring_service/logger"
 	"monitoring_service/pubsub"
+	"strings"
 	"time"
 )
 
@@ -41,21 +42,36 @@ Foreign-key constraints:
     "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE */
 
 // StartRedisToDBWorker menjalankan worker untuk memindahkan data dari Redis ke PostgreSQL secara periodik
-func StartRedisToDBWorker(interval time.Duration, stopChan <-chan struct{}) {
+
+func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	logger.Debug("WORKER", fmt.Sprintf("DEBUG - WORKED STARTED, interval: %v", interval))
+	// Ambil memory limit hanya sekali di awal agar tidak terlalu banyak log
+
+	logger.Info("WORKER", fmt.Sprintf("INFO - Redis Memory Limit: %d bytes", memoryLimit))
+	logger.Debug("WORKER", fmt.Sprintf("DEBUG - Worker started with interval: %v", interval))
 
 	for {
 		select {
 		case <-ticker.C:
-			logger.Info("WORKER", "INFO - Worker is checking Redis data...")
-			err := scanAndSaveRedisBuffer()
+			logger.Debug("WORKER", "DEBUG - Checking Redis memory usage...")
+
+			// Cek penggunaan memori Redis
+			redisFull, err := isRedisMemoryFull(memoryLimit)
 			if err != nil {
+				logger.Error("WORKER", "ERROR - Failed to check Redis memory:", err)
+				continue
+			}
 
-				logger.Error("WORKER", "ERROR - scanAndSaveRedisBuffer: ", err)
+			// Jika Redis penuh, flush ke database segera
+			if redisFull {
+				logger.Warning("WORKER", "WARNING - Redis memory limit exceeded! Forcing immediate data flush to database.")
+			}
 
+			// Jalankan proses penyimpanan data ke database (baik normal maupun jika Redis penuh)
+			if err := scanAndSaveRedisBuffer(); err != nil {
+				logger.Error("WORKER", "ERROR - scanAndSaveRedisBuffer:", err)
 			}
 
 		case <-stopChan:
@@ -63,6 +79,38 @@ func StartRedisToDBWorker(interval time.Duration, stopChan <-chan struct{}) {
 			return
 		}
 	}
+}
+
+func isRedisMemoryFull(memoryLimit int64) (bool, error) {
+	ctx := context.Background()
+	redisClient := pubsub.GetRedisClient()
+	if redisClient == nil {
+		return false, fmt.Errorf("redis client is not initialized")
+	}
+
+	// Ambil informasi penggunaan memori dari Redis
+	memInfo, err := redisClient.Info(ctx, "memory").Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to get Redis memory info: %w", err)
+	}
+
+	// Parsing `used_memory` dan `used_memory_human`
+	var usedMemory int64
+	var usedMemoryHuman string
+
+	for _, line := range strings.Split(memInfo, "\n") {
+		if strings.HasPrefix(line, "used_memory:") {
+			fmt.Sscanf(line, "used_memory:%d", &usedMemory)
+		}
+		if strings.HasPrefix(line, "used_memory_human:") {
+			usedMemoryHuman = strings.TrimPrefix(line, "used_memory_human:")
+		}
+	}
+
+	// Log hanya `used_memory_human`
+	logger.Info("WORKER", "Info - MEMORY USED N REDIS: "+strings.TrimSpace(usedMemoryHuman))
+
+	return usedMemory > memoryLimit, nil
 }
 
 func scanAndSaveRedisBuffer() error {
