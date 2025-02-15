@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"monitoring_service/logger"
-	"monitoring_service/utils"
 	"encoding/json"
 	"fmt"
 	"io"
+	"monitoring_service/logger"
+	"monitoring_service/utils"
 	"net/http"
 )
 
@@ -49,6 +49,12 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 	// Penanganan untuk metode GET
 	if r.Method == http.MethodGet {
 		res := "Hello!"
+		fmt.Fprint(w, res)
+		return
+	}
+
+	if r.URL.Path != "/" {
+		res := "Not Found"
 		fmt.Fprint(w, res)
 		return
 	}
@@ -103,5 +109,4 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 	logger.Info(referenceID, "Response body: ", res)
 	fmt.Fprint(w, res)
 
-	
 }

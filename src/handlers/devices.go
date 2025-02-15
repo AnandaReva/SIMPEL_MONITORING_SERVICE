@@ -15,19 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-/* // Inisialisasi hub WebSocket
-var hub *pubsub.WebSocketHub
-
-func init() {
-	var err error
-	hub, err = pubsub.NewWebSocketHub("INIT")
-	if err != nil {
-		logger.Error("INIT", "ERROR - Failed to initialize WebSocketHub:", err)
-	}
-}
-*/
 // Upgrader WebSocket
-var upgrader = websocket.Upgrader{
+var deviceUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
@@ -50,16 +39,16 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	defer func() {
 		duration := time.Since(startTime)
-		logger.Debug(referenceID, "DEBUG - Execution completed in:", duration)
+		logger.Debug(referenceID, "DEBUG - Device_Create_Conn - Execution completed in:", duration)
 	}()
 
 	deviceName := r.Header.Get("name")
 	password := r.Header.Get("password")
 
-	logger.Info(referenceID, "INFO - Incoming WebSocket connection - Device:", deviceName)
+	logger.Info(referenceID, "INFO - Device_Create_Conn - Incoming WebSocket connection - Device:", deviceName)
 
 	if deviceName == "" || password == "" {
-		logger.Error(referenceID, "ERROR - Missing credentials")
+		logger.Error(referenceID, "ERROR - Device_Create_Conn - Missing credentials")
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "400000",
 			ErrorMessage: "Bad Request",
@@ -70,7 +59,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	// Mendapatkan koneksi database
 	conn, err := db.GetConnection()
 	if err != nil {
-		logger.Error(referenceID, "ERROR - Failed to get database connection:", err)
+		logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to get database connection:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500000",
 			ErrorMessage: "Internal Server Error",
@@ -89,13 +78,13 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			logger.Error(referenceID, "ERROR - Invalid device ID")
+			logger.Error(referenceID, "ERROR - Device_Create_Conn -  Invalid device ID")
 			utils.Response(w, utils.ResultFormat{
 				ErrorCode:    "401000",
 				ErrorMessage: "Unauthorized",
 			})
 		} else {
-			logger.Error(referenceID, "ERROR - Database query failed:", err)
+			logger.Error(referenceID, "ERROR - Device_Create_Conn - Database query failed:", err)
 			utils.Response(w, utils.ResultFormat{
 				ErrorCode:    "500002",
 				ErrorMessage: "Internal Server Error",
@@ -107,7 +96,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	// Generate salted password
 	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, deviceData.Salt, 32, 1000)
 	if errSaltedPass != "" {
-		logger.Error(referenceID, "ERROR - Failed to generate salted password:", errSaltedPass)
+		logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to generate salted password:", errSaltedPass)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500001",
 			ErrorMessage: "Internal Server Error",
@@ -130,7 +119,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	hub, err := pubsub.GetWebSocketHub(referenceID)
 	if err != nil {
 
-		logger.Error(referenceID, "ERROR - Failed to initialize WebSocketHub:", err)
+		logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to initialize WebSocketHub:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500003",
 			ErrorMessage: "Internal Server error",
@@ -139,12 +128,12 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Upgrade ke WebSocket
-	wsConn, err := upgrader.Upgrade(w, r, nil)
+	wsConn, err := deviceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		logger.Error(referenceID, "ERROR - WebSocket upgrade failed:", err)
+		logger.Error(referenceID, "ERROR - Device_Create_Conn - WebSocket upgrade failed:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500003",
-			ErrorMessage: "Failed to upgrade to WebSocket",
+			ErrorMessage: "Internal server",
 		})
 		return
 	}
@@ -155,13 +144,13 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() {
 			hub.RemoveDevice(referenceID, wsConn)
-			logger.Info(referenceID, "INFO - WebSocket connection closed")
+			logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed")
 		}()
 
 		for {
 			messageType, message, err := wsConn.ReadMessage()
 			if err != nil {
-				logger.Error(referenceID, "ERROR - WebSocket read error:", err)
+				logger.Error(referenceID, "ERROR - Device_Create_Conn - WebSocket read error:", err)
 				break
 			}
 
