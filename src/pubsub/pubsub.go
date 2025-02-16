@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"monitoring_service/logger"
+	"sort"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -21,8 +22,8 @@ import (
 // WebSocketHub menyimpan koneksi WebSocket dan integrasi Redis
 type WebSocketHub struct {
 	mu      sync.Mutex
-	devices map[*websocket.Conn]*DeviceClient
-	users   map[*websocket.Conn]*UserClient
+	Devices map[*websocket.Conn]*DeviceClient
+	Users   map[*websocket.Conn]*UserClient
 	redis   *redis.Client
 }
 
@@ -114,8 +115,8 @@ func NewWebSocketHub(reference_id string) (*WebSocketHub, error) {
 	}
 
 	hub := &WebSocketHub{
-		devices: make(map[*websocket.Conn]*DeviceClient),
-		users:   make(map[*websocket.Conn]*UserClient),
+		Devices: make(map[*websocket.Conn]*DeviceClient),
+		Users:   make(map[*websocket.Conn]*UserClient),
 		redis:   redisClient,
 	}
 
@@ -123,27 +124,96 @@ func NewWebSocketHub(reference_id string) (*WebSocketHub, error) {
 	return hub, nil
 }
 
+// GetActiveDevices mengembalikan daftar perangkat yang sedang terhubung dengan pagination
+func (hub *WebSocketHub) GetActiveDevices(reference_id string, pageNumber int64, pageSize int64) []*DeviceClient {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+
+	logStr := fmt.Sprintf("GetActiveDevices ,  page_number: %d, page_size: %d ", pageNumber, pageSize)
+
+	logger.Info(reference_id, "INFO - ", logStr)
+
+	devices := make([]*DeviceClient, 0, len(hub.Devices))
+	for _, device := range hub.Devices {
+		devices = append(devices, device)
+	}
+
+	// Sorting berdasarkan DeviceID untuk memastikan urutan
+	sort.Slice(devices, func(i, j int) bool {
+		return devices[i].DeviceID < devices[j].DeviceID
+	})
+
+	// Implementasi pagination
+	startIndex := -1
+	for i, device := range devices {
+		if device.DeviceID >= pageNumber {
+			startIndex = i
+			break
+		}
+	}
+
+	if startIndex == -1 {
+		return []*DeviceClient{} // Jika tidak ada device dengan DeviceID >= pageNumber
+	}
+
+	endIndex := startIndex + int(pageSize)
+	if endIndex > len(devices) {
+		endIndex = len(devices)
+	}
+
+	return devices[startIndex:endIndex]
+}
+
+// GetTotalChannelSubscribers mengembalikan jumlah total subscriber untuk device tertentu
+func GetTotalChannelSubscribers(reference_id string, deviceID int64) (int64, error) {
+	redisClient := GetRedisClient()
+	if redisClient == nil {
+		return 0, fmt.Errorf("redis client is not initialized or failed to reconnect")
+	}
+
+	// Nama channel berdasarkan deviceID
+	channelName := fmt.Sprintf("device:%d", deviceID)
+	logger.Info(reference_id, fmt.Sprintf("INFO - get total subscribers channel: %s", channelName))
+
+	// Menggunakan perintah Redis PUBSUB NUMSUB
+	ctx := context.Background()
+	result, err := redisClient.PubSubNumSub(ctx, channelName).Result()
+	if err != nil {
+		logger.Error(reference_id, fmt.Sprintf("ERROR - Failed to get subscribers for channel: %s, error: %v", channelName, err))
+		return 0, err
+	}
+
+	// Hasil dari PubSubNumSub adalah map[string]int64, ambil nilai dari channel yang diminta
+	totalSubscribers, ok := result[channelName]
+	if !ok {
+		totalSubscribers = 0
+	}
+
+	logger.Info(reference_id, fmt.Sprintf("INFO - Total subscribers for %s: %d", channelName, totalSubscribers))
+	return totalSubscribers, nil
+}
+
 // Menambahkan Device Baru
 func (hub *WebSocketHub) AddDevice(reference_id string, conn *websocket.Conn, deviceID int64, deviceName string) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
-	hub.devices[conn] = &DeviceClient{
+	hub.Devices[conn] = &DeviceClient{
 		DeviceID:   deviceID,
 		DeviceName: deviceName,
 		Conn:       conn,
 	}
 
 	logger.Info(reference_id, fmt.Sprintf("INFO - NEW DEVICE Connected - DeviceID: %d, DeviceName: %s", deviceID, deviceName))
-	logger.Info(reference_id, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.devices)))
+	logger.Info(reference_id, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.Devices)))
 }
 
 // Menghapus Device
 func (hub *WebSocketHub) RemoveDevice(reference_id string, conn *websocket.Conn) {
 	hub.mu.Lock()
-	device, exists := hub.devices[conn]
+	device, exists := hub.Devices[conn]
 	if exists {
-		delete(hub.devices, conn)
+		delete(hub.Devices, conn)
 	}
 	hub.mu.Unlock()
 
@@ -153,14 +223,14 @@ func (hub *WebSocketHub) RemoveDevice(reference_id string, conn *websocket.Conn)
 		logger.Info(reference_id, "INFO - REMOVING DEVICE SUCCESSFUL")
 	}
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.devices)))
+	logger.Info(reference_id, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.Devices)))
 }
 
 func (hub *WebSocketHub) AddUser(reference_id string, conn *websocket.Conn, userId int64, username string, role string) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
-	hub.users[conn] = &UserClient{
+	hub.Users[conn] = &UserClient{
 		UserID:   userId,
 		Username: username,
 		Role:     role,
@@ -168,15 +238,15 @@ func (hub *WebSocketHub) AddUser(reference_id string, conn *websocket.Conn, user
 	}
 
 	logger.Info(reference_id, fmt.Sprintf("INFO - NEW USER Connected - userId: %d, username: %s, role: %s", userId, username, role))
-	logger.Info(reference_id, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.devices)))
+	logger.Info(reference_id, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.Devices)))
 }
 
 // Menghapus User
 func (hub *WebSocketHub) RemoveUser(reference_id string, conn *websocket.Conn) {
 	hub.mu.Lock()
-	user, exists := hub.users[conn]
+	user, exists := hub.Users[conn]
 	if exists {
-		delete(hub.users, conn)
+		delete(hub.Users, conn)
 	}
 	hub.mu.Unlock()
 

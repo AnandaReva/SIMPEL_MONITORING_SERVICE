@@ -39,7 +39,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		// Allow only GET and POST methods
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		// Allow only JSON content
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, session_id, signature, process")
 
 		if r.Method == http.MethodOptions {
 			// If preflight request, return 204 No Content

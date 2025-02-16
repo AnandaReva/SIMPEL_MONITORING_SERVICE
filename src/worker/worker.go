@@ -29,7 +29,7 @@ type DeviceData struct {
 --------------+------------------+-----------+----------+-----------------------------------
  id           | bigint           |           | not null |
  unit_id      | bigint           |           | not null |
- timestamp    | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
+ tstamp    | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
  voltage      | double precision |           | not null |
  current      | double precision |           | not null |
  power        | double precision |           | not null |
@@ -113,6 +113,46 @@ func isRedisMemoryFull(memoryLimit int64) (bool, error) {
 	return usedMemory > memoryLimit, nil
 }
 
+/* simple=> \d device.unit ;
+                                         Table "device.unit"
+     Column      |          Type          | Collation | Nullable |              Default
+-----------------+------------------------+-----------+----------+-----------------------------------
+ id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
+ name            | character varying(255) |           | not null |
+ status          | integer                |           | not null |
+ salt            | character varying(64)  |           | not null |
+ salted_password | character varying(128) |           | not null |
+ data            | jsonb                  |           | not null |
+ create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+Indexes:
+    "unit_pkey" PRIMARY KEY, btree (id)
+Referenced by:
+    TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+
+
+\d: extra argument ";" ignored
+simple=> \d device.data ;
+                                       Table "device.data"
+    Column    |       Type       | Collation | Nullable |                 Default
+--------------+------------------+-----------+----------+-----------------------------------------
+ id           | bigint           |           | not null | nextval('device.data_id_seq'::regclass)
+ unit_id      | bigint           |           | not null |
+ tstamp       | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
+ voltage      | double precision |           | not null |
+ current      | double precision |           | not null |
+ power        | double precision |           | not null |
+ energy       | double precision |           | not null |
+ frequency    | double precision |           | not null |
+ power_factor | double precision |           | not null |
+Indexes:
+    "data_new_pkey1" PRIMARY KEY, btree (id)
+Foreign-key constraints:
+    "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+
+
+\d: extra argument ";" ignored
+simple=> */
+
 func scanAndSaveRedisBuffer() error {
 	ctx := context.Background()
 	redisClient := pubsub.GetRedisClient()
@@ -120,6 +160,7 @@ func scanAndSaveRedisBuffer() error {
 		return fmt.Errorf("redis client is not initialized")
 	}
 
+	// Ambil semua data dari Redis
 	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
 	if err != nil {
 		return fmt.Errorf("failed to retrieve data from Redis: %w", err)
@@ -130,48 +171,84 @@ func scanAndSaveRedisBuffer() error {
 		return nil
 	}
 
-	var deviceDataList []DeviceData
+	// Ambil daftar unit_id yang valid dari database
+	dbConn, err := db.GetConnection()
+	if err != nil {
+		return fmt.Errorf("failed to get DB connection: %w", err)
+	}
+	defer db.ReleaseConnection()
+
+	validUnitIDs := make(map[int64]bool)
+	rows, err := dbConn.Query("SELECT id FROM device.unit")
+	if err != nil {
+		return fmt.Errorf("failed to get valid unit IDs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var unitID int64
+		if err := rows.Scan(&unitID); err != nil {
+			return fmt.Errorf("failed to scan unit ID: %w", err)
+		}
+		validUnitIDs[unitID] = true
+	}
+
+	// Pisahkan data valid dan invalid
+	var filteredData []DeviceData
+	var invalidData []string
+
 	for _, item := range data {
-		logger.Debug("WORKER", fmt.Sprintf("DEBUG - Raw JSON: %s", item))
 		var deviceData DeviceData
 		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to parse JSON: %v", err))
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v", err))
+			invalidData = append(invalidData, item)
 			continue
 		}
-		deviceDataList = append(deviceDataList, deviceData)
-	}
 
-	if len(deviceDataList) > 0 {
-		dbConn, err := db.GetConnection()
-		if err != nil {
-			return fmt.Errorf("failed to get DB connection: %w", err)
-		}
-		defer db.ReleaseConnection()
-
-		query := `INSERT INTO device.data (unit_id, timestamp, voltage, current, power, energy, frequency, power_factor) VALUES `
-		values := []interface{}{}
-
-		for i, data := range deviceDataList {
-			if i > 0 {
-				query += ", "
-			}
-			query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)", i*8+1, i*8+2, i*8+3, i*8+4, i*8+5, i*8+6, i*8+7, i*8+8)
-			values = append(values, data.Device_Id, data.Tstamp, data.Voltage, data.Current, data.Power, data.Energy, data.Frequency, data.Power_factor)
-		}
-
-		_, err = dbConn.Exec(query, values...)
-		if err != nil {
-			return fmt.Errorf("failed to execute batch insert: %w", err)
+		// Cek apakah unit_id valid
+		if _, exists := validUnitIDs[deviceData.Device_Id]; exists {
+			filteredData = append(filteredData, deviceData)
+		} else {
+			logger.Warning("WORKER", fmt.Sprintf("WARNING - Invalid unit_id: %d", deviceData.Device_Id))
+			invalidData = append(invalidData, item)
 		}
 	}
 
-	// Hapus data dari buffer setelah berhasil diproses
+	if len(invalidData) > 0 {
+		logger.Warning("WORKER", fmt.Sprintf("WARNING - %d invalid data : , %s ", len(invalidData), invalidData))
+	}
+
+	// Jika tidak ada data valid, hapus buffer utama
+	if len(filteredData) == 0 {
+		logger.Info("WORKER", "INFO - No valid data to insert, clearing buffer")
+		redisClient.Del(ctx, "buffer:device_data")
+		return nil
+	}
+
+	// Query batch insert ke database
+	query := `INSERT INTO device.data (unit_id, tstamp, voltage, current, power, energy, frequency, power_factor) VALUES `
+	values := []interface{}{}
+
+	for i, data := range filteredData {
+		if i > 0 {
+			query += ", "
+		}
+		query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)", i*8+1, i*8+2, i*8+3, i*8+4, i*8+5, i*8+6, i*8+7, i*8+8)
+		values = append(values, data.Device_Id, data.Tstamp, data.Voltage, data.Current, data.Power, data.Energy, data.Frequency, data.Power_factor)
+	}
+
+	_, err = dbConn.Exec(query, values...)
+	if err != nil {
+		return fmt.Errorf("failed to execute batch insert: %w", err)
+	}
+
+	// Hapus semua data dari buffer setelah berhasil diproses
 	_, err = redisClient.Del(ctx, "buffer:device_data").Result()
 	if err != nil {
 		logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to delete buffer: %v", err))
 		return err
 	}
 
-	logger.Info("WORKER", "INFO - Successfully processed and deleted Redis buffer")
+	logger.Info("WORKER", fmt.Sprintf("INFO - Successfully inserted %d records and cleaned Redis buffer", len(filteredData)))
 	return nil
 }
