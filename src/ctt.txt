@@ -12,6 +12,7 @@ set RDPASS=qwerqwer
 set RDDB=0
 
 //linux
+
 export DBDRIVER=postgres
 export DBHOST=localhost
 export DBUSER=user

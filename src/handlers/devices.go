@@ -28,6 +28,8 @@ type DeviceClientData struct {
 	SaltedPassword string `db:"salted_password"`
 }
 
+/* //exp param : ws://localhost:5001/device-connect?name={device_name}&password={device_password}*/
+
 // Device_Conn_WS menangani koneksi WebSocket dari IoT Device
 func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	var ctxKey HTTPContextKey = "requestID"
@@ -42,8 +44,9 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		logger.Debug(referenceID, "DEBUG - Device_Create_Conn - Execution completed in:", duration)
 	}()
 
-	deviceName := r.Header.Get("name")
-	password := r.Header.Get("password")
+	// Ambil token, session_id dan device_id dari query parameter
+	deviceName := r.URL.Query().Get("name")
+	password := r.URL.Query().Get("password")
 
 	logger.Info(referenceID, "INFO - Device_Create_Conn - Incoming WebSocket connection - Device:", deviceName)
 
