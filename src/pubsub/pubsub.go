@@ -129,6 +129,37 @@ func (hub *WebSocketHub) GetActiveDevices(reference_id string, pageNumber int64,
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
+	logger.Info(reference_id, fmt.Sprintf("INFO - GetActiveDevices , page_number: %d, page_size: %d", pageNumber, pageSize))
+
+	// Konversi map ke slice
+	devices := make([]*DeviceClient, 0, len(hub.Devices))
+	for _, device := range hub.Devices {
+		devices = append(devices, device)
+	}
+
+	// Sorting berdasarkan DeviceID agar konsisten
+	sort.Slice(devices, func(i, j int) bool {
+		return devices[i].DeviceID < devices[j].DeviceID
+	})
+
+	// Pagination menggunakan offset seperti SQL
+	offset := (pageNumber - 1) * pageSize
+	if offset >= int64(len(devices)) {
+		return []*DeviceClient{} // Jika offset melebihi jumlah data
+	}
+
+	endIndex := offset + pageSize
+	if endIndex > int64(len(devices)) {
+		endIndex = int64(len(devices))
+	}
+
+	return devices[offset:endIndex]
+}
+
+/* func (hub *WebSocketHub) GetActiveDevices(reference_id string, pageNumber int64, pageSize int64) []*DeviceClient {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+
 	logStr := fmt.Sprintf("GetActiveDevices ,  page_number: %d, page_size: %d ", pageNumber, pageSize)
 
 	logger.Info(reference_id, "INFO - ", logStr)
@@ -163,7 +194,7 @@ func (hub *WebSocketHub) GetActiveDevices(reference_id string, pageNumber int64,
 
 	return devices[startIndex:endIndex]
 }
-
+ */
 // GetTotalChannelSubscribers mengembalikan jumlah total subscriber untuk device tertentu
 func GetTotalChannelSubscribers(reference_id string, deviceID int64) (int64, error) {
 	redisClient := GetRedisClient()

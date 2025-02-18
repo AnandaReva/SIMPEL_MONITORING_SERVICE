@@ -45,6 +45,12 @@ func initProcessMap() {
 		Need_hash: true,
 	}
 
+	prcsMap["get_dummy_active_devices"] = prcs{
+		function:  process.Get_Dummy_Active_Devices,
+		class:     "user",
+		Need_hash: true,
+	}
+
 	InitPrcs = true
 }
 
@@ -54,133 +60,6 @@ type UserInfo struct {
 	SessionID   string
 	SessionHash string `db:"session_hash"`
 }
-
-/* func Process(w http.ResponseWriter, r *http.Request) {
-	var ctxKey HTTPContextKey = "requestID"
-	reference_id, ok := r.Context().Value(ctxKey).(string)
-	if !ok {
-		reference_id = "unknown"
-	}
-
-	startTime := time.Now()
-	defer func() {
-		duration := time.Since(startTime)
-		logger.Debug(reference_id, "DEBUG - Execution completed in:", duration)
-	}()
-
-	initProcessMap()
-
-	// Ambil nama proses dari URL path
-	pathParts := strings.Split(r.URL.Path, "/")
-	if len(pathParts) < 3 {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400001",
-			ErrorMessage: "Missing process name in URL",
-		})
-		return
-	}
-
-	processName := pathParts[2] // Ambil nama proses dari URL (http://host/process/{process_name})
-
-	// Cek apakah processName ada di map proses yang terdaftar
-	prc, exists := prcsMap[processName]
-	if !exists {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400002",
-			ErrorMessage: "Invalid process name",
-		})
-		return
-	}
-
-	// Mendapatkan koneksi database
-	conn, err := db.GetConnection()
-	if err != nil {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "500000",
-			ErrorMessage: "Internal Server Error",
-		})
-		return
-	}
-	defer db.ReleaseConnection()
-
-	var userInfo UserInfo
-
-	// Jika proses membutuhkan autentikasi hash
-	if prc.Need_hash {
-		sessionID := r.Header.Get("session_id")
-		signature := r.Header.Get("signature")
-		if sessionID == "" || signature == "" {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401000",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Missing session information")
-			return
-		}
-
-		query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_hash FROM sysuser.user su
-			LEFT JOIN sysuser.session ss ON su.id = ss.user_id WHERE ss.session_hash = $1`
-		err = conn.QueryRow(query, sessionID).Scan(&userInfo.UserID, &userInfo.UserRole, &userInfo.SessionHash)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401001",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Invalid session:", err)
-			return
-		}
-
-		// Parsing request body
-		body, err := utils.Request(r)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400003",
-				ErrorMessage: "Invalid request",
-			})
-			logger.Error(reference_id, "ERROR - Invalid request body:", err)
-			return
-		}
-
-		// Marshal body ke JSON untuk pengecekan signature
-		bodyRequest, err := json.Marshal(body)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400003",
-				ErrorMessage: "Failed to marshal request body",
-			})
-			logger.Error(reference_id, "ERROR - Failed to marshal request body:", err)
-			return
-		}
-
-		// Validasi signature
-		computedSignature, _ := crypto.GenerateHMAC(string(bodyRequest), userInfo.SessionHash)
-		if computedSignature != signature {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401002",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Invalid signature")
-			return
-		}
-	}
-
-	// Mengambil parameter dari request
-	param, err := utils.Request(r)
-	if err != nil {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400002",
-			ErrorMessage: "Failed to parse parameters",
-		})
-		return
-	}
-
-	// Eksekusi proses yang sesuai dengan function yang telah didaftarkan
-	result := prc.function(reference_id, conn, userInfo.UserID, userInfo.UserRole, param)
-
-	// Mengirim response berdasarkan hasil eksekusi proses
-	utils.Response(w, result)
-}
-*/
 
 func Process(w http.ResponseWriter, r *http.Request) {
 	var ctxKey HTTPContextKey = "requestID"
