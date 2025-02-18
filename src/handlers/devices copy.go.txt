@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
@@ -146,36 +145,6 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	hub.AddDevice(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
 
 	go func() {
-
-		// Contoh data dari device yang diterima:
-		// {
-		//   "Tstamp": 1707900015,
-		//   "Voltage": 220.5,
-		//   "Current": 2.3,
-		//   "Power": 700.15,
-		//   "Energy": 900.75,
-		//   "Frequency": 50.1,
-		//   "Power_factor": 0.98
-		// }
-
-		// Setelah diproses, data akan menjadi:
-		// {
-		//   "Device_Id": 1,
-		//   "Tstamp": 1707900015,
-		//   "Voltage": 220.5,
-		//   "Current": 2.3,
-		//   "Power": 700.15,
-		//   "Energy": 900.75,
-		//   "Frequency": 50.1,
-		//   "Power_factor": 0.98
-		// }
-
-		// !! NOTE: Langkah-langkah untuk memproses data dari sensor:
-		// 1. Periksa apakah semua field yang diperlukan ada dalam data yang diterima.
-		//    Jika ada field yang hilang, kirim pesan error {Data not valid} dan abaikan data.
-		// 2. Tambahkan "Device_Id" ke dalam pesan dengan mengambil dari DeviceClientData.DeviceId.
-		// 3. Jika data valid, publish ke Redis. Jika tidak, lewati proses.
-
 		defer func() {
 			hub.RemoveDevice(referenceID, wsConn)
 			logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed")
@@ -200,148 +169,69 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			logStr := fmt.Sprintf("Message Type: %s, Message: %s", msgTypeStr, string(message))
 			logger.Info(referenceID, "INFO - Received WebSocket: ", logStr)
 
-			// Validasi data
-			if !validateDeviceData(referenceID, message) {
-				continue
+			// Contoh data dari device yang diterima:
+			// {
+			//   "Tstamp": 1707900015,
+			//   "Voltage": 220.5,
+			//   "Current": 2.3,
+			//   "Power": 700.15,
+			//   "Energy": 900.75,
+			//   "Frequency": 50.1,
+			//   "Power_factor": 0.98
+			// }
+
+			// Setelah diproses, data akan menjadi:
+			// {
+			//   "Device_Id": 1,
+			//   "Tstamp": 1707900015,
+			//   "Voltage": 220.5,
+			//   "Current": 2.3,
+			//   "Power": 700.15,
+			//   "Energy": 900.75,
+			//   "Frequency": 50.1,
+			//   "Power_factor": 0.98
+			// }
+
+			// !! NOTE: Langkah-langkah untuk memproses data dari sensor:
+			// 1. Periksa apakah semua field yang diperlukan ada dalam data yang diterima.
+			//    Jika ada field yang hilang, kirim pesan error {Data not valid} dan abaikan data.
+			// 2. Tambahkan "Device_Id" ke dalam pesan dengan mengambil dari `DeviceClientData.DeviceId`.
+			// 3. Jika data valid, publish ke Redis. Jika tidak, lewati proses.
+
+			isDataValid := validateDeviceData(message)
+
+			if isDataValid {
+				msgString := string(message)
+
+				// Push data ke buffer Redis
+				err = pubsub.PushDataToBuffer(context.Background(), msgString, referenceID)
+				if err != nil {
+					logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
+				}
+
+				// Kirim data ke Redis
+				err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, msgString)
+				if err != nil {
+					logger.Error(referenceID, "ERROR - Failed to publish data to Redis:", err)
+				}
 			}
 
-			logger.Info(referenceID, "INFO - data is valid, adding device_id")
-
-			// Tambahkan Device_ID
-			msgString, err := addDeviceIdField(referenceID, message, deviceData.DeviceID)
-			if err != nil {
-				logger.Error(referenceID, "ERROR - Failed to process message:", err)
-				continue
-			}
-
-			logger.Info(referenceID, "INFO - msgString: ", msgString)
-
-			// Push data ke buffer Redis
-			err = pubsub.PushDataToBuffer(context.Background(), msgString, referenceID)
-			if err != nil {
-				logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
-			}
-
-			// Kirim data ke Redis
-			err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, msgString)
-			if err != nil {
-				logger.Error(referenceID, "ERROR - Failed to publish data to Redis:", err)
-			}
 		}
 	}()
 
 	logger.Info(referenceID, "INFO - WebSocket connection established for device:", deviceData.DeviceName)
 }
 
-// Fungsi validasi data dari IoT
-func validateDeviceData(referenceID string, data []byte) bool {
-	// Decode JSON dari []byte ke map[string]interface{}
-	var jsonData map[string]interface{}
-	err := json.Unmarshal(data, &jsonData)
-	if err != nil {
-		logger.Error(referenceID, "ERROR - validateDeviceData - Invalid JSON format:", err)
-		return false
-	}
-
-	// Daftar field yang wajib ada
+func validateDeviceData(data map[string]interface{}) bool {
 	requiredFields := []string{"Tstamp", "Voltage", "Current", "Power", "Energy", "Frequency", "Power_factor"}
 
 	// Periksa apakah setiap field yang diperlukan ada dalam data
 	for _, field := range requiredFields {
-		if _, exists := jsonData[field]; !exists {
-			logger.Error(referenceID, "ERROR - validateDeviceData - Data not valid: missing field", field)
+		if _, exists := data[field]; !exists {
+			logger.Error("Data not valid: missing field", field)
 			return false
 		}
 	}
 
 	return true
 }
-
-// Fungsi untuk menambahkan Device_ID ke JSON
-func addDeviceIdField(referenceID string, message []byte, deviceID int64) (string, error) {
-	// Decode JSON
-	var messageData map[string]interface{}
-	err := json.Unmarshal(message, &messageData)
-	if err != nil {
-		logger.Error(referenceID, "ERROR - addDeviceIdField - Invalid JSON format:", err)
-		return "", err
-	}
-
-	// Tambahkan Device_ID ke data
-	messageData["Device_Id"] = deviceID
-
-	// Encode kembali ke JSON string
-	msgBytes, err := json.Marshal(messageData)
-	if err != nil {
-		logger.Error(referenceID, "ERROR - addDeviceIdField - Failed to encode JSON:", err)
-		return "", err
-	}
-
-	return string(msgBytes), nil
-}
-
-/* // Tambahkan perangkat ke hub WebSocket
-hub.AddDevice(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
-
-go func() {
-	defer func() {
-		hub.RemoveDevice(referenceID, wsConn)
-		logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed")
-	}()
-
-	for {
-		messageType, message, err := wsConn.ReadMessage()
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Device_Create_Conn - WebSocket read error:", err)
-			break
-		}
-
-		// Format messageType (1 = Text, 2 = Binary)
-		msgTypeStr := "Unknown"
-		if messageType == 1 {
-			msgTypeStr = "Text"
-		} else if messageType == 2 {
-			msgTypeStr = "Binary"
-		}
-
-		// Log pesan yang diterima
-		logStr := fmt.Sprintf("Message Type: %s, Message: %s", msgTypeStr, string(message))
-		logger.Info(referenceID, "INFO - Received WebSocket: ", logStr)
-
-		// Decode JSON
-		var messageData map[string]interface{}
-		err = json.Unmarshal(message, &messageData)
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Invalid JSON format:", err)
-			continue
-		}
-
-		// Validasi data
-		if !validateDeviceData(messageData) {
-			logger.Error(referenceID, "ERROR - Device_Create_Conn - Received invalid data")
-			continue
-		}
-
-		// Tambahkan Device_ID
-		messageData["Device_Id"] = deviceData.DeviceID
-
-		// Konversi kembali ke JSON
-		processedMessage, err := json.Marshal(messageData)
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Failed to marshal processed data:", err)
-			continue
-		}
-
-		// Push ke Redis
-		err = pubsub.PushDataToBuffer(context.Background(), string(processedMessage), referenceID)
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
-		}
-
-		// Kirim ke Redis Channel
-		err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, string(processedMessage))
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Failed to publish data to Redis:", err)
-		}
-	}
-}() */
