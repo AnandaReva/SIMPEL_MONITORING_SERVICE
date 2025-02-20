@@ -131,6 +131,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.Debug(referenceID, "DEBUG - Device_Create_Conn - DISINI 1")
+
 	// Upgrade ke WebSocket
 	wsConn, err := deviceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -142,9 +144,12 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.Debug(referenceID, "DEBUG - Device_Create_Conn - DISINI 2")
+
 	// Tambahkan perangkat ke hub WebSocket
 	hub.AddDeviceToWebSocket(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
 
+	logger.Debug(referenceID, "DEBUG - Device_Create_Conn - DISINI 3")
 	go func() {
 
 		// Contoh data dari device yang diterima:
@@ -221,12 +226,12 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
 			}
-
 			// Kirim data ke Redis
 			err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, msgString)
 			if err != nil {
 				logger.Error(referenceID, "ERROR - Failed to publish data to Redis:", err)
 			}
+
 		}
 	}()
 

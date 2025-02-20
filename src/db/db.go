@@ -6,6 +6,7 @@ import (
 	"monitoring_service/logger"
 	"sync"
 	"time"
+
 	_ "github.com/go-sql-driver/mysql" // MySQL driver (imported only for its side-effect)
 	"github.com/jmoiron/sqlx"          // SQLx for database handling
 	_ "github.com/lib/pq"              // PostgreSQL driver (imported only for its side-effect)
@@ -13,10 +14,10 @@ import (
 
 // DBPool struct represents the connection pool for database connections.
 type DBPool struct {
-	db       *sqlx.DB  // SQLx database instance for connections
-	count    int       // Active connection count in the pool
+	db       *sqlx.DB   // SQLx database instance for connections
+	count    int        // Active connection count in the pool
 	mutex    sync.Mutex // Mutex to ensure safe concurrent access to the pool
-	poolSize int       // Maximum number of connections allowed in the pool
+	poolSize int        // Maximum number of connections allowed in the pool
 }
 
 // Global variable for the database pool
@@ -57,7 +58,6 @@ func ReleaseConnection() {
 	}
 }
 
-
 func InitDB(driver string, host string, port int, user string, password string, dbname string, poolSize int) error {
 	var err error
 
@@ -70,7 +70,6 @@ func InitDB(driver string, host string, port int, user string, password string, 
 		// If connection fails, return the error
 		return err
 	}
-
 
 	dbpool.db.SetMaxOpenConns(poolSize)
 	dbpool.db.SetMaxIdleConns(poolSize)

@@ -20,6 +20,10 @@ export DBPASS=pass
 export DBNAME=tubes
 
 
+export RDHOST=localhost:6379
+export RDPASS=qwerqwer
+export RDDB=0
+
 
 ### Langkah-langkah Login dengan Verifikasi Token
 
