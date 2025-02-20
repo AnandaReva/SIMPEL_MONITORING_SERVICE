@@ -143,7 +143,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tambahkan perangkat ke hub WebSocket
-	hub.AddDevice(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
+	hub.AddDeviceToWebSocket(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
 
 	go func() {
 
@@ -177,7 +177,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		// 3. Jika data valid, publish ke Redis. Jika tidak, lewati proses.
 
 		defer func() {
-			hub.RemoveDevice(referenceID, wsConn)
+			hub.RemoveDeviceFromWebSocket(referenceID, wsConn)
 			logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed")
 		}()
 

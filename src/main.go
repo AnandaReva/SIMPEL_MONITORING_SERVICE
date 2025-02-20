@@ -51,9 +51,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 		requestID := generateReferenceID(start.UnixNano())
 
 		// Log request details
+		logger.Info(requestID, "==========================================")
 		logger.Info(requestID, "Handle Request Started: ", r.Method, " ", r.URL.Path)
 		logger.Info(requestID, "Query String: ", r.URL.RawQuery)
-		logger.Info(requestID, "Headers:")
+		logger.Info(requestID, "Headers: ")
 		for name, values := range r.Header {
 			for _, value := range values {
 				logger.Debug(requestID, name, ": ", value)
@@ -68,7 +69,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		// Log completion and duration
 		duration := time.Since(start)
 		logger.Info(requestID, " Handle Request Completed in: ", duration)
-		logger.Info(requestID, " ----------------------------------------------")
+		logger.Info(requestID, "==========================================")
 
 	})
 }

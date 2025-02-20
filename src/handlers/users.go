@@ -171,14 +171,14 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tambah user ke hub
-	hub.AddUser(referenceID, wsConn, userData.UserID, userData.Username, userData.Role)
+	hub.AddUserToWebsocket(referenceID, wsConn, userData.UserID, userData.Username, userData.Role)
 
 	// Subscribe user ke channel Redis berdasarkan deviceId
 	hub.SubscribeUserToChannel(referenceID, wsConn, deviceID)
 
 	go func() {
 		defer func() {
-			hub.RemoveUser(referenceID, wsConn)
+			hub.RemoveUserFromWebSocket(referenceID, wsConn)
 			logger.Info(referenceID, "INFO - Users_Create_Conn - WebSocket connection closed")
 		}()
 

@@ -47,31 +47,36 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Ambil memory limit hanya sekali di awal agar tidak terlalu banyak log
-
 	logger.Info("WORKER", fmt.Sprintf("INFO - Redis Memory Limit: %d bytes", memoryLimit))
-	logger.Debug("WORKER", fmt.Sprintf("DEBUG - Worker started with interval: %v", interval))
 
 	for {
 		select {
 		case <-ticker.C:
 			logger.Debug("WORKER", "DEBUG - Checking Redis memory usage...")
-
-			// Cek penggunaan memori Redis
 			redisFull, err := isRedisMemoryFull(memoryLimit)
 			if err != nil {
-				logger.Error("WORKER", "ERROR - Failed to check Redis memory:", err)
+				logger.Error("WORKER", "ERROR - Failed to check Redis memory: ", err)
 				continue
 			}
 
-			// Jika Redis penuh, flush ke database segera
 			if redisFull {
 				logger.Warning("WORKER", "WARNING - Redis memory limit exceeded! Forcing immediate data flush to database.")
 			}
 
-			// Jalankan proses penyimpanan data ke database (baik normal maupun jika Redis penuh)
-			if err := scanAndSaveRedisBuffer(); err != nil {
-				logger.Error("WORKER", "ERROR - scanAndSaveRedisBuffer:", err)
+			// Coba langsung dump data
+			if err := dumpRedisBuffer(nil); err != nil {
+				logger.Error("WORKER", "ERROR - Initial dumpRedisBuffer failed, retrying with scanRedisBuffer: ", err)
+
+				// Jika gagal, coba scan ulang lalu dump lagi
+				filteredData, err := scanRedisBuffer()
+				if err != nil {
+					logger.Error("WORKER", "ERROR - scanRedisBuffer failed: ", err)
+					continue
+				}
+
+				if err := dumpRedisBuffer(filteredData); err != nil {
+					logger.Error("WORKER", "ERROR - Retried dumpRedisBuffer still failed: ", err)
+				}
 			}
 
 		case <-stopChan:
@@ -113,82 +118,94 @@ func isRedisMemoryFull(memoryLimit int64) (bool, error) {
 	return usedMemory > memoryLimit, nil
 }
 
-/* simple=> \d device.unit ;
-                                         Table "device.unit"
-     Column      |          Type          | Collation | Nullable |              Default
------------------+------------------------+-----------+----------+-----------------------------------
- id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
- name            | character varying(255) |           | not null |
- status          | integer                |           | not null |
- salt            | character varying(64)  |           | not null |
- salted_password | character varying(128) |           | not null |
- data            | jsonb                  |           | not null |
- create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
-Indexes:
-    "unit_pkey" PRIMARY KEY, btree (id)
-Referenced by:
-    TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+/*
+	simple=> \d device.unit ;
+	                                        Table "device.unit"
+	    Column      |          Type          | Collation | Nullable |              Default
 
+-----------------+------------------------+-----------+----------+-----------------------------------
+
+	id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
+	name            | character varying(255) |           | not null |
+	status          | integer                |           | not null |
+	salt            | character varying(64)  |           | not null |
+	salted_password | character varying(128) |           | not null |
+	data            | jsonb                  |           | not null |
+	create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+
+Indexes:
+
+	"unit_pkey" PRIMARY KEY, btree (id)
+
+Referenced by:
+
+	TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 
 \d: extra argument ";" ignored
 simple=> \d device.data ;
-                                       Table "device.data"
-    Column    |       Type       | Collation | Nullable |                 Default
---------------+------------------+-----------+----------+-----------------------------------------
- id           | bigint           |           | not null | nextval('device.data_id_seq'::regclass)
- unit_id      | bigint           |           | not null |
- tstamp       | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
- voltage      | double precision |           | not null |
- current      | double precision |           | not null |
- power        | double precision |           | not null |
- energy       | double precision |           | not null |
- frequency    | double precision |           | not null |
- power_factor | double precision |           | not null |
-Indexes:
-    "data_new_pkey1" PRIMARY KEY, btree (id)
-Foreign-key constraints:
-    "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 
+	                                   Table "device.data"
+	Column    |       Type       | Collation | Nullable |                 Default
+
+--------------+------------------+-----------+----------+-----------------------------------------
+
+	id           | bigint           |           | not null | nextval('device.data_id_seq'::regclass)
+	unit_id      | bigint           |           | not null |
+	tstamp       | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
+	voltage      | double precision |           | not null |
+	current      | double precision |           | not null |
+	power        | double precision |           | not null |
+	energy       | double precision |           | not null |
+	frequency    | double precision |           | not null |
+	power_factor | double precision |           | not null |
+
+Indexes:
+
+	"data_new_pkey1" PRIMARY KEY, btree (id)
+
+Foreign-key constraints:
+
+	"fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 
 \d: extra argument ";" ignored
-simple=> */
-
-func scanAndSaveRedisBuffer() error {
+simple=>
+*/
+func scanRedisBuffer() ([]DeviceData, error) {
 	ctx := context.Background()
 	redisClient := pubsub.GetRedisClient()
 	if redisClient == nil {
-		return fmt.Errorf("redis client is not initialized")
+		return nil, fmt.Errorf("redis client is not initialized")
 	}
 
 	// Ambil semua data dari Redis
 	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
 	if err != nil {
-		return fmt.Errorf("failed to retrieve data from Redis: %w", err)
+		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
 	}
 
 	if len(data) == 0 {
 		logger.Info("WORKER", "INFO - No data found in Redis buffer")
-		return nil
+		return nil, nil
 	}
 
 	// Ambil daftar unit_id yang valid dari database
 	dbConn, err := db.GetConnection()
 	if err != nil {
-		return fmt.Errorf("failed to get DB connection: %w", err)
+		return nil, fmt.Errorf("failed to get DB connection: %w", err)
 	}
 	defer db.ReleaseConnection()
 
 	validUnitIDs := make(map[int64]bool)
 	rows, err := dbConn.Query("SELECT id FROM device.unit")
 	if err != nil {
-		return fmt.Errorf("failed to get valid unit IDs: %w", err)
+		return nil, fmt.Errorf("failed to get valid unit IDs: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var unitID int64
 		if err := rows.Scan(&unitID); err != nil {
-			return fmt.Errorf("failed to scan unit ID: %w", err)
+			return nil, fmt.Errorf("failed to scan unit ID: %w", err)
 		}
 		validUnitIDs[unitID] = true
 	}
@@ -205,7 +222,6 @@ func scanAndSaveRedisBuffer() error {
 			continue
 		}
 
-		// Cek apakah unit_id valid
 		if _, exists := validUnitIDs[deviceData.Device_Id]; exists {
 			filteredData = append(filteredData, deviceData)
 		} else {
@@ -215,17 +231,24 @@ func scanAndSaveRedisBuffer() error {
 	}
 
 	if len(invalidData) > 0 {
-		logger.Warning("WORKER", fmt.Sprintf("WARNING - %d invalid data : , %s ", len(invalidData), invalidData))
+		logger.Warning("WORKER", fmt.Sprintf("WARNING - %d invalid data entries: %v", len(invalidData), invalidData))
 	}
 
-	// Jika tidak ada data valid, hapus buffer utama
+	return filteredData, nil
+}
+
+func dumpRedisBuffer(filteredData []DeviceData) error {
 	if len(filteredData) == 0 {
-		logger.Info("WORKER", "INFO - No valid data to insert, clearing buffer")
-		redisClient.Del(ctx, "buffer:device_data")
+		logger.Info("WORKER", "INFO - No valid data to insert")
 		return nil
 	}
 
-	// Query batch insert ke database
+	dbConn, err := db.GetConnection()
+	if err != nil {
+		return fmt.Errorf("failed to get DB connection: %w", err)
+	}
+	defer db.ReleaseConnection()
+
 	query := `INSERT INTO device.data (unit_id, tstamp, voltage, current, power, energy, frequency, power_factor) VALUES `
 	values := []interface{}{}
 
@@ -242,8 +265,9 @@ func scanAndSaveRedisBuffer() error {
 		return fmt.Errorf("failed to execute batch insert: %w", err)
 	}
 
-	// Hapus semua data dari buffer setelah berhasil diproses
-	_, err = redisClient.Del(ctx, "buffer:device_data").Result()
+	// Hapus data dari Redis setelah sukses
+	redisClient := pubsub.GetRedisClient()
+	_, err = redisClient.Del(context.Background(), "buffer:device_data").Result()
 	if err != nil {
 		logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to delete buffer: %v", err))
 		return err
