@@ -42,7 +42,7 @@ func Get_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role s
 	// Ambil WebSocketHub instance
 	hub, err := pubsub.GetWebSocketHub(reference_id)
 	if err != nil {
-		logger.Error(reference_id, "ERROR - Failed to get WebSocketHub instance")
+		logger.Error(reference_id, "ERROR - Failed to get WebSocketHub instance: ", err)
 		result.ErrorCode = "500001"
 		result.ErrorMessage = "Internal server error"
 		return result
