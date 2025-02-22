@@ -1,5 +1,6 @@
 # Gunakan image base Golang
-FROM golang:alpine
+#FROM golang:alpine
+FROM golang:1.21 AS builder
 
 # Install git untuk dependency management
 RUN apk update && apk add --no-cache git

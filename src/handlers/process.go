@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
 	"monitoring_service/logger"
@@ -63,53 +64,42 @@ type UserInfo struct {
 
 func Process(w http.ResponseWriter, r *http.Request) {
 	var ctxKey HTTPContextKey = "requestID"
-	reference_id, ok := r.Context().Value(ctxKey).(string)
+	referenceID, ok := r.Context().Value(ctxKey).(string)
 	if !ok {
-		reference_id = "unknown"
+		referenceID = "unknown"
 	}
 
 	startTime := time.Now()
 	defer func() {
-		duration := time.Since(startTime)
-		logger.Debug(reference_id, "DEBUG - Execution completed in:", duration)
+		logger.Debug(referenceID, "DEBUG - Execution completed in:", time.Since(startTime))
 	}()
 
 	initProcessMap()
 
 	if r.Method != http.MethodPost {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400000",
-			ErrorMessage: "Invalid request method",
-		})
+		utils.Response(w, utils.ResultFormat{ErrorCode: "405000", ErrorMessage: "Method not allowed"})
 		return
 	}
 
 	processName := r.Header.Get("process")
 	if processName == "" {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400001",
-			ErrorMessage: "Missing process name in header",
-		})
+		utils.Response(w, utils.ResultFormat{ErrorCode: "400001", ErrorMessage: "Invalid request"})
+		logger.Error(referenceID, "ERROR - Missing process name in header")
 		return
 	}
 
-	logger.Info("PROCESS", "DEBUG - process name in header: ", processName)
+	logger.Info(referenceID, "DEBUG - process name:", processName)
 
 	prc, exists := prcsMap[processName]
 	if !exists {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400002",
-			ErrorMessage: "Invalid process name",
-		})
+		utils.Response(w, utils.ResultFormat{ErrorCode: "400002", ErrorMessage: "Invalid request"})
 		return
 	}
 
 	conn, err := db.GetConnection()
 	if err != nil {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "500000",
-			ErrorMessage: "Internal Server Error",
-		})
+		utils.Response(w, utils.ResultFormat{ErrorCode: "500000", ErrorMessage: "Internal server error"})
+		logger.Error(referenceID, "ERROR - Database connection error:", err)
 		return
 	}
 	defer db.ReleaseConnection()
@@ -117,236 +107,72 @@ func Process(w http.ResponseWriter, r *http.Request) {
 	var userInfo UserInfo
 	var param map[string]interface{}
 
-	if prc.Need_hash {
-		sessionID := r.Header.Get("session_id")
-		signature := r.Header.Get("signature")
-		if sessionID == "" || signature == "" {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401000",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Missing session information")
-			return
-		}
-
-		query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_hash FROM sysuser.user su
-			LEFT JOIN sysuser.session ss ON su.id = ss.user_id WHERE ss.session_id = $1`
-		err = conn.QueryRow(query, sessionID).Scan(&userInfo.UserID, &userInfo.UserRole, &userInfo.SessionHash)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401001",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Invalid session:", err)
-			return
-		}
-
-		logger.Info(reference_id, "INFO - Request body:", r.Body)
-		param, err = utils.Request(r)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400003",
-				ErrorMessage: "Invalid request",
-			})
-			logger.Error(reference_id, "ERROR - Invalid request body:", err)
-			return
-		}
-
-		logger.Info(reference_id, "INFO - Parsed request body:", param)
-		bodyRequest, err := json.Marshal(param)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400003",
-				ErrorMessage: "Failed to marshal request body",
-			})
-			logger.Error(reference_id, "ERROR - Failed to marshal request body:", err)
-			return
-		}
-
-		HMACMessage := string(bodyRequest)
-		HMACKey := userInfo.SessionHash
-		logger.Info(reference_id, "INFO - HMAC message: ", HMACMessage)
-		logger.Info(reference_id, "INFO - HMAC key: ", HMACKey)
-
-		computedSignature, _ := crypto.GenerateHMAC(HMACMessage, HMACKey)
-		logger.Info(reference_id, "INFO - computedSignature: ", computedSignature)
-		logger.Info(reference_id, "INFO - Signature from client: ", signature)
-		if computedSignature != signature {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401002",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Invalid signature")
-			return
-		}
-		logger.Info(reference_id, "INFO - SIGNATURE VALID: ")
-
-	} else {
-		param, err = utils.Request(r)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400002",
-				ErrorMessage: "Failed to parse parameters",
-			})
-			logger.Error(reference_id, "ERROR - Failed to parse parameters", err)
-			return
-		}
+	// Parsing request body terlebih dahulu
+	param, err = utils.Request(r)
+	if err != nil {
+		utils.Response(w, utils.ResultFormat{ErrorCode: "400003", ErrorMessage: "Invalid request"})
+		logger.Error(referenceID, "ERROR - Failed to parse request body:", err)
+		return
 	}
 
-	result := prc.function(reference_id, conn, userInfo.UserID, userInfo.UserRole, param)
+	// Jika membutuhkan hashing (autentikasi)
+	if prc.Need_hash {
+		userInfo, err = validateSession(r, conn, referenceID)
+		if err != nil {
+			utils.Response(w, utils.ResultFormat{ErrorCode: "401000", ErrorMessage: "Invalid request"})
+			logger.Error(referenceID, "ERROR -", err)
+			return
+		}
+
+		if err := validateSignature(r, param, userInfo, referenceID); err != nil {
+			utils.Response(w, utils.ResultFormat{ErrorCode: "401002", ErrorMessage: "Invalid request"})
+			logger.Error(referenceID, "ERROR -", err)
+			return
+		}
+		logger.Info(referenceID, "INFO - SIGNATURE VALID")
+	}
+
+	result := prc.function(referenceID, conn, userInfo.UserID, userInfo.UserRole, param)
 	utils.Response(w, result)
 }
 
-/* func Process(w http.ResponseWriter, r *http.Request) {
-	var ctxKey HTTPContextKey = "requestID"
-	reference_id, ok := r.Context().Value(ctxKey).(string)
-	if !ok {
-		reference_id = "unknown"
+// validateSession menangani pengecekan sesi pengguna
+func validateSession(r *http.Request, conn *sqlx.DB, referenceID string) (UserInfo, error) {
+	sessionID := r.Header.Get("session_id")
+	signature := r.Header.Get("signature")
+
+	if sessionID == "" || signature == "" {
+		return UserInfo{}, errors.New("unauthorized: Missing session information")
 	}
-
-	startTime := time.Now()
-	defer func() {
-		duration := time.Since(startTime)
-		logger.Debug(reference_id, "DEBUG - Execution completed in:", duration)
-	}()
-
-	initProcessMap()
-
-	if r.Method != http.MethodPost {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400000",
-			ErrorMessage: "Invalid request method",
-		})
-		return
-	}
-
-	// Mendapatkan nama proses dari header request
-	processName := r.Header.Get("process")
-	if processName == "" {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400001",
-			ErrorMessage: "Missing process name in header",
-		})
-		return
-	}
-
-	logger.Info("PROCESS", "DEBUG - process name in header: ", processName)
-
-	// Cek apakah processName ada di map proses yang terdaftar
-	prc, exists := prcsMap[processName]
-	if !exists {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400002",
-			ErrorMessage: "Invalid process name",
-		})
-		return
-	}
-
-	// Mendapatkan koneksi database
-	conn, err := db.GetConnection()
-	if err != nil {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "500000",
-			ErrorMessage: "Internal Server Error",
-		})
-		return
-	}
-	defer db.ReleaseConnection()
 
 	var userInfo UserInfo
-	var bodyRequest  map[string]interface{}
-
-	// Jika proses membutuhkan autentikasi hash
-	if prc.Need_hash {
-		sessionID := r.Header.Get("session_id")
-		signature := r.Header.Get("signature")
-		if sessionID == "" || signature == "" {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401000",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Missing session information")
-			return
-		}
-
-		query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_hash FROM sysuser.user su
-			LEFT JOIN sysuser.session ss ON su.id = ss.user_id WHERE ss.session_id = $1`
-		err = conn.QueryRow(query, sessionID).Scan(&userInfo.UserID, &userInfo.UserRole, &userInfo.SessionHash)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401001",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Invalid session:", err)
-			return
-		}
-
-		// Using Request to parse the request body
-		logger.Info(reference_id, "INFO - Request body:", r.Body)
-
-		body, err := utils.Request(r)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400003",
-				ErrorMessage: "Invalid request",
-			})
-			logger.Error(reference_id, "ERROR - Invalid request body:", err)
-			return
-		}
-
-		logger.Info(reference_id, "INFO - Request body:", body)
-
-		// Marshal the body to JSON string for signature check
-		bodyRequest, err := json.Marshal(body)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400003",
-				ErrorMessage: "Failed to marshal request body",
-			})
-			logger.Error(reference_id, "ERROR - Failed to marshal request body:", err)
-			return
-		}
-
-		HMACMessage := string(bodyRequest)
-		HMACKey := userInfo.SessionHash
-		logger.Info(reference_id, "INFO - HMAC message: ", HMACMessage)
-		logger.Info(reference_id, "INFO - HMAC key: ", HMACKey)
-
-		// Convert bodyRequest to string for signature comparison
-		computedSignature, _ := crypto.GenerateHMAC(HMACMessage, HMACKey)
-		logger.Info(reference_id, "INFO - computedSignature: ", computedSignature)
-		logger.Info(reference_id, "INFO - Signature from client: ", signature)
-		if computedSignature != signature {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "401002",
-				ErrorMessage: "Unauthorized",
-			})
-			logger.Error(reference_id, "ERROR - Unauthorized: Invalid signature")
-			return
-		}
-
-		param, err := body
-
-
-	} else {
-
-		// Mengambil parameter dari request
-		param, err := utils.Request(r)
-		if err != nil {
-			utils.Response(w, utils.ResultFormat{
-				ErrorCode:    "400002",
-				ErrorMessage: "Failed to parse parameters",
-			})
-			logger.Error(reference_id, "ERROR - disini Failed to parse parameters", err)
-			return
-		}
-
+	query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_hash 
+		FROM sysuser.user su LEFT JOIN sysuser.session ss 
+		ON su.id = ss.user_id WHERE ss.session_id = $1`
+	err := conn.QueryRow(query, sessionID).Scan(&userInfo.UserID, &userInfo.UserRole, &userInfo.SessionHash)
+	if err != nil {
+		return UserInfo{}, errors.New("unauthorized: Invalid session")
 	}
 
-	// Eksekusi proses yang sesuai dengan function yang telah didaftarkan
-	result := prc.function(reference_id, conn, userInfo.UserID, userInfo.UserRole, param)
-
-	// Mengirim response berdasarkan hasil eksekusi proses
-	utils.Response(w, result)
+	return userInfo, nil
 }
-*/
+
+// validateSignature menangani validasi HMAC signature
+func validateSignature(r *http.Request, param map[string]interface{}, userInfo UserInfo, referenceID string) error {
+	bodyRequest, err := json.Marshal(param)
+	if err != nil {
+		return errors.New("failed to marshal request body")
+	}
+
+	computedSignature, _ := crypto.GenerateHMAC(string(bodyRequest), userInfo.SessionHash)
+	clientSignature := r.Header.Get("signature")
+
+	logger.Info(referenceID, "INFO - Computed Signature:", computedSignature)
+	logger.Info(referenceID, "INFO - Client Signature:", clientSignature)
+
+	if computedSignature != clientSignature {
+		return errors.New("unauthorized: Invalid signature")
+	}
+
+	return nil
+}

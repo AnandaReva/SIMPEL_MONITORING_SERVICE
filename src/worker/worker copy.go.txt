@@ -14,7 +14,7 @@ import (
 // DeviceData sesuai dengan tabel device.data
 type DeviceData struct {
 	Device_Id    int64 // unit_id
-	Tstamp       int64 // epoch time
+	Tstamp       time.Time 
 	Voltage      float64
 	Current      float64
 	Power        float64
@@ -45,35 +45,28 @@ Indexes:
 Referenced by:
 
 TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+simpel=> \d device.data;
+                                            Table "device.data"
+    Column    |           Type           | Collation | Nullable |                 Default                  
+--------------+--------------------------+-----------+----------+------------------------------------------
+ id           | bigint                   |           | not null | nextval('device.data2_id_seq'::regclass)
+ unit_id      | bigint                   |           | not null | 
+ tstamp       | timestamp with time zone |           | not null | now()
+ voltage      | double precision         |           | not null | 
+ current      | double precision         |           | not null | 
+ power        | double precision         |           | not null | 
+ energy       | double precision         |           | not null | 
+ frequency    | double precision         |           | not null | 
+ power_factor | double precision         |           | not null | 
+Indexes:
+    "data_tstamp_idx" btree (tstamp DESC)
+    "data_unique_idx" UNIQUE, btree (id, tstamp)
+Foreign-key constraints:
+    "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+Triggers:
+    ts_insert_blocker BEFORE INSERT ON device.data FOR EACH ROW EXECUTE FUNCTION _timescaledb_functions.insert_blocker()
 
-\d: extra argument ";" ignored
-simple=> \d device.data ;
 
-	Table "device.data"
-									   Column    |       Type       | Collation | Nullable |                 Default
-
-									   --------------+------------------+-----------+----------+-----------------------------------------
-
-									   id           | bigint           |           | not null | nextval('device.data_id_seq'::regclass)
-									   unit_id      | bigint           |           | not null |
-									   tstamp       | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
-									   voltage      | double precision |           | not null |
-									   current      | double precision |           | not null |
-	power        | double precision |           | not null |
-	energy       | double precision |           | not null |
-	frequency    | double precision |           | not null |
-	power_factor | double precision |           | not null |
-
-	Indexes:
-
-	"data_new_pkey1" PRIMARY KEY, btree (id)
-
-	Foreign-key constraints:
-
-	"fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-
-	\d: extra argument ";" ignored
-	simple=>
 */
 // StartRedisToDBWorker menjalankan worker untuk memindahkan data dari Redis ke PostgreSQL secara periodik
 
@@ -159,12 +152,37 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 	}
 }
 
+// func fetchRedisBuffer() ([]DeviceData, error) {
+// 	ctx := context.Background()
+// 	redisClient := pubsub.GetRedisClient()
+// 	if redisClient == nil {
+// 		return nil, fmt.Errorf("redis client is not initialized")
+// 	}
+// 	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
+// 	}
+
+// 	var parsedData []DeviceData
+// 	for _, item := range data {
+// 		var deviceData DeviceData
+// 		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
+// 			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v", err))
+// 			continue
+// 		}
+// 		parsedData = append(parsedData, deviceData)
+// 	}
+
+// 	return parsedData, nil
+// }
+
 func fetchRedisBuffer() ([]DeviceData, error) {
 	ctx := context.Background()
 	redisClient := pubsub.GetRedisClient()
 	if redisClient == nil {
 		return nil, fmt.Errorf("redis client is not initialized")
 	}
+
 	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
@@ -172,16 +190,46 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 
 	var parsedData []DeviceData
 	for _, item := range data {
-		var deviceData DeviceData
+		var deviceData struct {
+			Device_Id    int64   `json:"Device_Id"`
+			Tstamp       string  `json:"Tstamp"` // Format string dari Redis
+			Voltage      float64 `json:"Voltage"`
+			Current      float64 `json:"Current"`
+			Power        float64 `json:"Power"`
+			Energy       float64 `json:"Energy"`
+			Frequency    float64 `json:"Frequency"`
+			Power_factor float64 `json:"Power_factor"`
+		}
+
 		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
 			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v", err))
 			continue
 		}
-		parsedData = append(parsedData, deviceData)
+
+		// Konversi string timestamp ke time.Time
+		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
+		if err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v", err))
+			continue
+		}
+
+		// Simpan data ke struct dengan timestamp yang sudah dikonversi
+		parsedData = append(parsedData, DeviceData{
+			Device_Id:    deviceData.Device_Id,
+			Tstamp:       parsedTime.UTC(), // Pastikan UTC untuk konsistensi di DB
+			Voltage:      deviceData.Voltage,
+			Current:      deviceData.Current,
+			Power:        deviceData.Power,
+			Energy:       deviceData.Energy,
+			Frequency:    deviceData.Frequency,
+			Power_factor: deviceData.Power_factor,
+		})
 	}
 
 	return parsedData, nil
 }
+
+
 
 func validateDeviceData(data []DeviceData) ([]DeviceData, error) {
 	if len(data) == 0 {
