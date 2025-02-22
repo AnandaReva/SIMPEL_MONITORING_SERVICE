@@ -219,13 +219,15 @@ func PushDataToBuffer(ctx context.Context, data string, reference_id string) err
 
 	logger.Info(reference_id, fmt.Sprintf("INFO - Pushing data to buffer: %s", data))
 
-	err := redisClient.RPush(ctx, "buffer:device_data", data).Err()
+	redisBufferName := "buffer:device_data"
+
+	err := redisClient.RPush(ctx, redisBufferName, data).Err()
 	if err != nil {
 		logger.Error(reference_id, fmt.Sprintf("ERROR - Failed to push data to buffer: %v", err))
 		return err
 	}
 
-	logger.Info(reference_id, "INFO - Data successfully pushed to buffer")
+	logger.Info(reference_id, "INFO - Data successfully pushed to buffer with name : ", redisBufferName)
 	return nil
 }
 

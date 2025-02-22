@@ -154,7 +154,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 		// Contoh data dari device yang diterima:
 		// {
-		//   "Tstamp": 1707900015,
+		//   "Tstamp": "2025-02-22 12:02:00+00",
 		//   "Voltage": 220.5,
 		//   "Current": 2.3,
 		//   "Power": 700.15,
@@ -166,7 +166,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		// Setelah diproses, data akan menjadi:
 		// {
 		//   "Device_Id": 1,
-		//   "Tstamp": 1707900015,
+		//   "Tstamp": "2025-02-22 12:02:00+00",
 		//   "Voltage": 220.5,
 		//   "Current": 2.3,
 		//   "Power": 700.15,
@@ -210,12 +210,12 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			logger.Info(referenceID, "INFO - data is valid, adding device_id")
+			logger.Info(referenceID, "INFO - Device_Create_Conn - data is valid, adding device_id")
 
 			// Tambahkan Device_ID
 			msgString, err := addDeviceIdField(referenceID, message, deviceData.DeviceID)
 			if err != nil {
-				logger.Error(referenceID, "ERROR - Failed to process message:", err)
+				logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to process message:", err)
 				continue
 			}
 
@@ -224,18 +224,18 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			// Push data ke buffer Redis
 			err = pubsub.PushDataToBuffer(context.Background(), msgString, referenceID)
 			if err != nil {
-				logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
+				logger.Error(referenceID, "ERROR - Device_Create_Conn-  Failed to push data to Redis Buffer: ", err)
 			}
 			// Kirim data ke Redis
 			err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, msgString)
 			if err != nil {
-				logger.Error(referenceID, "ERROR - Failed to publish data to Redis:", err)
+				logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to publish data to Redis : ", err)
 			}
 
 		}
 	}()
 
-	logger.Info(referenceID, "INFO - WebSocket connection established for device:", deviceData.DeviceName)
+	logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection established for device:", deviceData.DeviceName)
 }
 
 // Fungsi validasi data dari IoT
@@ -254,7 +254,7 @@ func validateDeviceData(referenceID string, data []byte) bool {
 	// Periksa apakah setiap field yang diperlukan ada dalam data
 	for _, field := range requiredFields {
 		if _, exists := jsonData[field]; !exists {
-			logger.Error(referenceID, "ERROR - validateDeviceData - Data not valid: missing field", field)
+			logger.Error(referenceID, "ERROR - validateDeviceData - Data not valid: missing fields : ", field)
 			return false
 		}
 	}

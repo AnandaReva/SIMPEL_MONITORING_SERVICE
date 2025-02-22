@@ -14,7 +14,7 @@ import (
 // DeviceData sesuai dengan tabel device.data
 type DeviceData struct {
 	Device_Id    int64 // unit_id
-	Tstamp       time.Time
+	Tstamp       int64 // epoch time
 	Voltage      float64
 	Current      float64
 	Power        float64
@@ -45,28 +45,35 @@ Indexes:
 Referenced by:
 
 TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-simpel=> \d device.data;
-                                            Table "device.data"
-    Column    |           Type           | Collation | Nullable |                 Default
---------------+--------------------------+-----------+----------+------------------------------------------
- id           | bigint                   |           | not null | nextval('device.data2_id_seq'::regclass)
- unit_id      | bigint                   |           | not null |
- tstamp       | timestamp with time zone |           | not null | now()
- voltage      | double precision         |           | not null |
- current      | double precision         |           | not null |
- power        | double precision         |           | not null |
- energy       | double precision         |           | not null |
- frequency    | double precision         |           | not null |
- power_factor | double precision         |           | not null |
-Indexes:
-    "data_tstamp_idx" btree (tstamp DESC)
-    "data_unique_idx" UNIQUE, btree (id, tstamp)
-Foreign-key constraints:
-    "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-Triggers:
-    ts_insert_blocker BEFORE INSERT ON device.data FOR EACH ROW EXECUTE FUNCTION _timescaledb_functions.insert_blocker()
 
+\d: extra argument ";" ignored
+simple=> \d device.data ;
 
+	Table "device.data"
+									   Column    |       Type       | Collation | Nullable |                 Default
+
+									   --------------+------------------+-----------+----------+-----------------------------------------
+
+									   id           | bigint           |           | not null | nextval('device.data_id_seq'::regclass)
+									   unit_id      | bigint           |           | not null |
+									   tstamp       | bigint           |           | not null | EXTRACT(epoch FROM now())::bigint
+									   voltage      | double precision |           | not null |
+									   current      | double precision |           | not null |
+	power        | double precision |           | not null |
+	energy       | double precision |           | not null |
+	frequency    | double precision |           | not null |
+	power_factor | double precision |           | not null |
+
+	Indexes:
+
+	"data_new_pkey1" PRIMARY KEY, btree (id)
+
+	Foreign-key constraints:
+
+	"fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+
+	\d: extra argument ";" ignored
+	simple=>
 */
 // StartRedisToDBWorker menjalankan worker untuk memindahkan data dari Redis ke PostgreSQL secara periodik
 
@@ -158,7 +165,6 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 	if redisClient == nil {
 		return nil, fmt.Errorf("redis client is not initialized")
 	}
-
 	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
@@ -166,39 +172,12 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 
 	var parsedData []DeviceData
 	for _, item := range data {
-		var deviceData struct {
-			Device_Id    int64   `json:"Device_Id"`
-			Tstamp       string  `json:"Tstamp"`
-			Voltage      float64 `json:"Voltage"`
-			Current      float64 `json:"Current"`
-			Power        float64 `json:"Power"`
-			Energy       float64 `json:"Energy"`
-			Frequency    float64 `json:"Frequency"`
-			Power_factor float64 `json:"Power_factor"`
-		}
-
+		var deviceData DeviceData
 		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v - DATA: %s", err, item))
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v", err))
 			continue
 		}
-
-		// Konversi string timestamp ke time.Time
-		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
-		if err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
-			continue
-		}
-
-		parsedData = append(parsedData, DeviceData{
-			Device_Id:    deviceData.Device_Id,
-			Tstamp:       parsedTime.UTC(),
-			Voltage:      deviceData.Voltage,
-			Current:      deviceData.Current,
-			Power:        deviceData.Power,
-			Energy:       deviceData.Energy,
-			Frequency:    deviceData.Frequency,
-			Power_factor: deviceData.Power_factor,
-		})
+		parsedData = append(parsedData, deviceData)
 	}
 
 	return parsedData, nil
@@ -250,30 +229,20 @@ func saveDataToDB(data []DeviceData) error {
 		return fmt.Errorf("failed to get DB connection: %w", err)
 	}
 
-	// Gunakan batch insert untuk efisiensi
-	tx, err := dbConn.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
+	query := `INSERT INTO device.data (unit_id, tstamp, voltage, current, power, energy, frequency, power_factor) VALUES `
+	values := []interface{}{}
 
-	stmt, err := tx.Prepare(`INSERT INTO device.data (unit_id, tstamp, voltage, current, power, energy, frequency, power_factor) 
-							  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, d := range data {
-		_, err := stmt.Exec(d.Device_Id, d.Tstamp, d.Voltage, d.Current, d.Power, d.Energy, d.Frequency, d.Power_factor)
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to execute insert: %w", err)
+	for i, d := range data {
+		if i > 0 {
+			query += ", "
 		}
+		query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)", i*8+1, i*8+2, i*8+3, i*8+4, i*8+5, i*8+6, i*8+7, i*8+8)
+		values = append(values, d.Device_Id, d.Tstamp, d.Voltage, d.Current, d.Power, d.Energy, d.Frequency, d.Power_factor)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+	_, err = dbConn.Exec(query, values...)
+	if err != nil {
+		return fmt.Errorf("failed to execute batch insert: %w", err)
 	}
 
 	clearRedisBuffer()
