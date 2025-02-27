@@ -46,6 +46,12 @@ func initProcessMap() {
 		Need_hash: true,
 	}
 
+	prcsMap["get_device_list"] = prcs{
+		function:  process.Get_Device_List,
+		class:     "user",
+		Need_hash: true,
+	}
+
 	prcsMap["get_dummy_active_devices"] = prcs{
 		function:  process.Get_Dummy_Active_Devices,
 		class:     "user",
@@ -164,8 +170,12 @@ func validateSignature(r *http.Request, param map[string]interface{}, userInfo U
 		return errors.New("failed to marshal request body")
 	}
 
-	computedSignature, _ := crypto.GenerateHMAC(string(bodyRequest), userInfo.SessionHash)
+	message := string(bodyRequest)
+	computedSignature, _ := crypto.GenerateHMAC(message, userInfo.SessionHash)
 	clientSignature := r.Header.Get("signature")
+
+	logger.Info(referenceID, "INFO - validateSignature - HMAC MESSAGE (body request stringyfy):", message)
+	logger.Info(referenceID, "INFO - validateSignature - HMAC KEY (session-hash):", userInfo.SessionHash)
 
 	logger.Info(referenceID, "INFO - Computed Signature:", computedSignature)
 	logger.Info(referenceID, "INFO - Client Signature:", clientSignature)

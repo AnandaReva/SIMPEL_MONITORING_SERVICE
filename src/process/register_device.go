@@ -90,7 +90,7 @@ func Register_Device(referenceID string, conn *sqlx.DB, userID int64, role strin
 	var createTstamp = time.Now().Unix()
 
 	var newDeviceID int
-	errQuery2 := conn.Get(&newDeviceID, queryToRegister, deviceName, 1, salt, saltedPassword, "{}", createTstamp)
+	errQuery2 := conn.Get(&newDeviceID, queryToRegister, deviceName, 0, salt, saltedPassword, "{}", createTstamp)
 	if errQuery2 != nil {
 		logger.Error(referenceID, "ERROR - Register_devce -  Failed to insert new device: ", errQuery2)
 		result.ErrorCode = "500003"

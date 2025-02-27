@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
@@ -11,9 +12,11 @@ import (
 	pubsub "monitoring_service/pubsub"
 	"monitoring_service/utils"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jmoiron/sqlx"
 )
 
 // Upgrader WebSocket
@@ -51,7 +54,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info(referenceID, "INFO - Device_Create_Conn - Incoming WebSocket connection - Device:", deviceName)
 
-	if deviceName == "" || password == "" {
+	if strings.TrimSpace(deviceName) == "" || strings.TrimSpace(password) == "" {
+
 		logger.Error(referenceID, "ERROR - Device_Create_Conn - Missing credentials")
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "400000",
@@ -131,8 +135,6 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Debug(referenceID, "DEBUG - Device_Create_Conn - DISINI 1")
-
 	// Upgrade ke WebSocket
 	wsConn, err := deviceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -144,12 +146,14 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Debug(referenceID, "DEBUG - Device_Create_Conn - DISINI 2")
-
 	// Tambahkan perangkat ke hub WebSocket
 	hub.AddDeviceToWebSocket(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
 
 	logger.Debug(referenceID, "DEBUG - Device_Create_Conn - DISINI 3")
+	errChangeStatus := Change_Device_Status(referenceID, deviceData.DeviceID, 1, conn)
+	if errChangeStatus != nil {
+		logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to change device status", errChangeStatus)
+	}
 	go func() {
 
 		// Contoh data dari device yang diterima:
@@ -183,7 +187,11 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 		defer func() {
 			hub.RemoveDeviceFromWebSocket(referenceID, wsConn)
-			logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed")
+			err := Change_Device_Status(referenceID, deviceData.DeviceID, 0, conn)
+			if err != nil {
+				logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to change device status", err)
+			}
+			logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed and status changed")
 		}()
 
 		for {
@@ -285,68 +293,25 @@ func addDeviceIdField(referenceID string, message []byte, deviceID int64) (strin
 	return string(msgBytes), nil
 }
 
-/* // Tambahkan perangkat ke hub WebSocket
-hub.AddDevice(referenceID, wsConn, deviceData.DeviceID, deviceData.DeviceName)
+func Change_Device_Status(referenceID string, deviceId int64, currStatus int, conn *sqlx.DB) error {
+	// Validasi currStatus (hanya boleh 0 atau 1)
 
-go func() {
-	defer func() {
-		hub.RemoveDevice(referenceID, wsConn)
-		logger.Info(referenceID, "INFO - Device_Create_Conn - WebSocket connection closed")
-	}()
+	logStr := fmt.Sprintf("Change_Device_Status - device_id %d, status = %d", deviceId, currStatus)
+	logger.Info(referenceID, "INFO - ", logStr)
 
-	for {
-		messageType, message, err := wsConn.ReadMessage()
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Device_Create_Conn - WebSocket read error:", err)
-			break
-		}
-
-		// Format messageType (1 = Text, 2 = Binary)
-		msgTypeStr := "Unknown"
-		if messageType == 1 {
-			msgTypeStr = "Text"
-		} else if messageType == 2 {
-			msgTypeStr = "Binary"
-		}
-
-		// Log pesan yang diterima
-		logStr := fmt.Sprintf("Message Type: %s, Message: %s", msgTypeStr, string(message))
-		logger.Info(referenceID, "INFO - Received WebSocket: ", logStr)
-
-		// Decode JSON
-		var messageData map[string]interface{}
-		err = json.Unmarshal(message, &messageData)
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Invalid JSON format:", err)
-			continue
-		}
-
-		// Validasi data
-		if !validateDeviceData(messageData) {
-			logger.Error(referenceID, "ERROR - Device_Create_Conn - Received invalid data")
-			continue
-		}
-
-		// Tambahkan Device_ID
-		messageData["Device_Id"] = deviceData.DeviceID
-
-		// Konversi kembali ke JSON
-		processedMessage, err := json.Marshal(messageData)
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Failed to marshal processed data:", err)
-			continue
-		}
-
-		// Push ke Redis
-		err = pubsub.PushDataToBuffer(context.Background(), string(processedMessage), referenceID)
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Failed to push data to Redis Buffer:", err)
-		}
-
-		// Kirim ke Redis Channel
-		err = hub.DevicePublishToChannel(referenceID, deviceData.DeviceID, string(processedMessage))
-		if err != nil {
-			logger.Error(referenceID, "ERROR - Failed to publish data to Redis:", err)
-		}
+	if currStatus < 0 || currStatus > 1 {
+		logger.Error(referenceID, "ERROR - Change_Device_Status - currStatus value missing or invalid:", currStatus)
+		return errors.New("currStatus value missing or invalid")
 	}
-}() */
+
+	var deviceIdToUpdate int64
+	queryToChangeStatus := `UPDATE device.unit SET st = $1 WHERE id = $2 RETURNING id`
+
+	errQuery := conn.Get(&deviceIdToUpdate, queryToChangeStatus, currStatus, deviceId)
+	if errQuery != nil {
+		logger.Error(referenceID, "ERROR - Change_Device_Status - Failed to update:", errQuery)
+		return errQuery
+	}
+
+	return nil
+}
