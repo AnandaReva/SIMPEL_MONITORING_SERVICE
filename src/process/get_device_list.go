@@ -143,6 +143,7 @@ func Get_Device_List(reference_id string, conn *sqlx.DB, userID int64, role stri
 	result.Payload["devices"] = devices
 	result.Payload["total_data"] = totalData
 	result.Payload["total_page"] = totalPage
+	result.Payload["status"] = "success"
 	logger.Info(reference_id, "INFO - Get_Device_List completed successfully")
 	return result
 }

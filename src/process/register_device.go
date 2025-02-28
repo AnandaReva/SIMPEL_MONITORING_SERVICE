@@ -1,6 +1,7 @@
 package process
 
 import (
+	"monitoring_service/configs"
 	"monitoring_service/crypto"
 	"monitoring_service/logger"
 	"monitoring_service/utils"
@@ -48,7 +49,7 @@ func Register_Device(referenceID string, conn *sqlx.DB, userID int64, role strin
 	}
 
 	// Generate hashed password menggunakan PBKDF2
-	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, salt, 32, 1000)
+	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, salt, 32, configs.GetPBKDF2Iterations())
 	if errSaltedPass != "" {
 		logger.Error(referenceID, "ERROR - Register_devce -  Failed to generate salted password: ", errSaltedPass)
 		result.ErrorCode = "500001"

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"monitoring_service/configs"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
 	"monitoring_service/logger"
@@ -102,7 +103,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate salted password
-	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, deviceData.Salt, 32, 1000)
+	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, deviceData.Salt, 32, configs.GetPBKDF2Iterations())
 	if errSaltedPass != "" {
 		logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to generate salted password:", errSaltedPass)
 		utils.Response(w, utils.ResultFormat{
