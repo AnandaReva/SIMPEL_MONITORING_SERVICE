@@ -9,19 +9,19 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-func Get_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+func Get_Active_Devices(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{
 		ErrorCode:    "000000",
 		ErrorMessage: "",
 		Payload:      make(map[string]any),
 	}
 
-	logger.Info(reference_id, "INFO - Get_Active_Devices param: ", param)
+	logger.Info(referenceId, "INFO - Get_Active_Devices param: ", param)
 
 	// Validasi parameter pagination
 	pageSizeFloat, ok := param["page_size"].(float64)
 	if !ok || pageSizeFloat <= 0 {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Get_Active_Devices - Invalid page_size: %v", param["page_size"]))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Active_Devices - Invalid page_size: %v", param["page_size"]))
 		result.ErrorCode = "400001"
 		result.ErrorMessage = "Invalid page size"
 		return result
@@ -29,7 +29,7 @@ func Get_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role s
 
 	pageNumberFloat, ok := param["page_number"].(float64)
 	if !ok || pageNumberFloat < 0 {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Get_Active_Devices - Invalid page_number: %v", param["page_number"]))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Active_Devices - Invalid page_number: %v", param["page_number"]))
 		result.ErrorCode = "400002"
 		result.ErrorMessage = "Invalid page number"
 		return result
@@ -40,9 +40,9 @@ func Get_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role s
 	pageNumber := int64(pageNumberFloat)
 
 	// Ambil WebSocketHub instance
-	hub, err := pubsub.GetWebSocketHub(reference_id)
+	hub, err := pubsub.GetWebSocketHub(referenceId)
 	if err != nil {
-		logger.Error(reference_id, "ERROR - Failed to get WebSocketHub instance: ", err)
+		logger.Error(referenceId, "ERROR - Failed to get WebSocketHub instance: ", err)
 		result.ErrorCode = "500001"
 		result.ErrorMessage = "Internal server error"
 		return result
@@ -52,7 +52,7 @@ func Get_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role s
 	totalDevices := int64(len(hub.Devices))
 
 	// Dapatkan daftar device yang aktif berdasarkan pagination
-	activeDevices := hub.GetActiveDevices(reference_id, pageNumber, pageSize)
+	activeDevices := hub.GetActiveDevices(referenceId, pageNumber, pageSize)
 
 	// Format hasil ke dalam payload
 	devicesData := []map[string]interface{}{}
@@ -66,24 +66,24 @@ func Get_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role s
 	result.Payload["status"] = "success"
 	result.Payload["devices"] = devicesData
 	result.Payload["total_data"] = totalDevices
-	logger.Info(reference_id, fmt.Sprintf("INFO - Found %d active devices", len(activeDevices)))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Found %d active devices", len(activeDevices)))
 
 	return result
 }
 
-func Get_Dummy_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+func Get_Dummy_Active_Devices(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{
 		ErrorCode:    "000000",
 		ErrorMessage: "",
 		Payload:      make(map[string]any),
 	}
 
-	logger.Info(reference_id, "INFO - Get_Dummy_Active_Devices param: ", param)
+	logger.Info(referenceId, "INFO - Get_Dummy_Active_Devices param: ", param)
 
 	// Validasi parameter pagination
 	pageSizeFloat, ok := param["page_size"].(float64)
 	if !ok || pageSizeFloat <= 0 {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Get_Dummy_Active_Devices - Invalid page_size: %v", param["page_size"]))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Dummy_Active_Devices - Invalid page_size: %v", param["page_size"]))
 		result.ErrorCode = "400001"
 		result.ErrorMessage = "Invalid page size"
 		return result
@@ -91,7 +91,7 @@ func Get_Dummy_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, 
 
 	pageNumberFloat, ok := param["page_number"].(float64)
 	if !ok || pageNumberFloat <= 0 { // Harus >= 1
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Get_Dummy_Active_Devices - Invalid page_number: %v", param["page_number"]))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Dummy_Active_Devices - Invalid page_number: %v", param["page_number"]))
 		result.ErrorCode = "400002"
 		result.ErrorMessage = "Invalid page number"
 		return result
@@ -138,7 +138,7 @@ func Get_Dummy_Active_Devices(reference_id string, conn *sqlx.DB, userID int64, 
 	result.Payload["page_size"] = pageSize
 	result.Payload["total_pages"] = (totalData + pageSize - 1) / pageSize // Pembulatan ke atas
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - Page %d, Showing %d of %d devices", pageNumber, len(devicesData), totalData))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Page %d, Showing %d of %d devices", pageNumber, len(devicesData), totalData))
 
 	return result
 }

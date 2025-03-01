@@ -17,7 +17,7 @@ const (
 	DEBUG   = "DEBUG"
 )
 
-var logLevel string = INFO
+var logLevel string = DEBUG
 
 // SetLogLevel sets the log level for the logger
 func SetLogLevel(level string) {

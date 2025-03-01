@@ -9,13 +9,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func (hub *WebSocketHub) AddUserToWebsocket(reference_id string, conn *websocket.Conn, userId int64, username string, role string) {
+func (hub *WebSocketHub) AddUserToWebsocket(referenceId string, conn *websocket.Conn, userId int64, username string, role string) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
 	// Cek apakah userId sudah memiliki koneksi aktif
 	if oldConn, exists := hub.UserConn[userId]; exists {
-		logger.Warning(reference_id, fmt.Sprintf("WARNING - User %s reconnecting. Closing old connection.", username))
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - User %s reconnecting. Closing old connection.", username))
 		oldConn.Close()
 		delete(hub.Users, oldConn)
 		delete(hub.UserConn, userId)
@@ -32,25 +32,25 @@ func (hub *WebSocketHub) AddUserToWebsocket(reference_id string, conn *websocket
 	// Simpan referensi userId ke koneksi baru
 	hub.UserConn[userId] = conn
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - NEW USER Connected - userId: %d, username: %s, role: %s", userId, username, role))
-	logger.Info(reference_id, fmt.Sprintf("INFO - Total users connected: %d", len(hub.Users)))
+	logger.Info(referenceId, fmt.Sprintf("INFO - NEW USER Connected - userId: %d, username: %s, role: %s", userId, username, role))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Total users connected: %d", len(hub.Users)))
 }
 
 // RemoveUserFromWebSocket menghapus user dari hub dan unsubscribe dari channel jika ada
-func (hub *WebSocketHub) RemoveUserFromWebSocket(reference_id string, conn *websocket.Conn) {
+func (hub *WebSocketHub) RemoveUserFromWebSocket(referenceId string, conn *websocket.Conn) {
 	hub.mu.Lock()
 	user, exists := hub.Users[conn]
 	hub.mu.Unlock()
 
 	if !exists {
-		logger.Warning(reference_id, "WARNING - Attempted to remove non-existent user")
+		logger.Warning(referenceId, "WARNING - Attempted to remove non-existent user")
 		return
 	}
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - Removing user ID: %d, Username: %s", user.UserID, user.Username))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Removing user ID: %d, Username: %s", user.UserID, user.Username))
 
 	if user.ChannelSubscribed != "" {
-		hub.UnsubscribeUserFromChannel(reference_id, conn)
+		hub.UnsubscribeUserFromChannel(referenceId, conn)
 	}
 
 	hub.mu.Lock()
@@ -60,22 +60,22 @@ func (hub *WebSocketHub) RemoveUserFromWebSocket(reference_id string, conn *webs
 
 	conn.Close()
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - Successfully removed user ID: %d", user.UserID))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Successfully removed user ID: %d", user.UserID))
 }
 
 // Subscribe user ke channel Redis
-func (hub *WebSocketHub) SubscribeUserToChannel(reference_id string, userConn *websocket.Conn, deviceID string) {
+func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *websocket.Conn, deviceID string) {
 	hub.mu.Lock()
 	userClient, exists := hub.Users[userConn]
 	hub.mu.Unlock()
 
 	if !exists {
-		logger.Error(reference_id, "ERROR - User not found, cannot subscribe")
+		logger.Error(referenceId, "ERROR - User not found, cannot subscribe")
 		return
 	}
 
 	if userClient.PubSub != nil {
-		logger.Info(reference_id, fmt.Sprintf("INFO - User %s is already subscribed. Unsubscribing first.", userClient.Username))
+		logger.Info(referenceId, fmt.Sprintf("INFO - User %s is already subscribed. Unsubscribing first.", userClient.Username))
 		_ = userClient.PubSub.Close() // Tutup subscription sebelumnya
 	}
 
@@ -84,18 +84,18 @@ func (hub *WebSocketHub) SubscribeUserToChannel(reference_id string, userConn *w
 	userClient.PubSub = hub.redis.Subscribe(ctx, channelName)
 	userClient.ChannelSubscribed = deviceID
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - User %s subscribed to channel: %s", userClient.Username, channelName))
+	logger.Info(referenceId, fmt.Sprintf("INFO - User %s subscribed to channel: %s", userClient.Username, channelName))
 
 	go func() {
 		defer func() {
-			hub.UnsubscribeUserFromChannel(reference_id, userConn)
+			hub.UnsubscribeUserFromChannel(referenceId, userConn)
 		}()
 
 		ch := userClient.PubSub.Channel()
 		for msg := range ch {
 			if err := userConn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
-				logger.Error(reference_id, fmt.Sprintf("ERROR - Failed to send message to user %s: %v", userClient.Username, err))
-				hub.RemoveUserFromWebSocket(reference_id, userConn)
+				logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to send message to user %s: %v", userClient.Username, err))
+				hub.RemoveUserFromWebSocket(referenceId, userConn)
 				return
 			}
 		}
@@ -103,7 +103,7 @@ func (hub *WebSocketHub) SubscribeUserToChannel(reference_id string, userConn *w
 }
 
 // Unsubscribe user dari channel Redis dan hapus langganan di sistem
-func (hub *WebSocketHub) UnsubscribeUserFromChannel(reference_id string, userConn *websocket.Conn) {
+func (hub *WebSocketHub) UnsubscribeUserFromChannel(referenceId string, userConn *websocket.Conn) {
 	hub.mu.Lock()
 	user, exists := hub.Users[userConn]
 	hub.mu.Unlock()
@@ -117,7 +117,7 @@ func (hub *WebSocketHub) UnsubscribeUserFromChannel(reference_id string, userCon
 		user.PubSub = nil
 	}
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - User %s unsubscribed from channel: %s", user.Username, user.ChannelSubscribed))
+	logger.Info(referenceId, fmt.Sprintf("INFO - User %s unsubscribed from channel: %s", user.Username, user.ChannelSubscribed))
 
 	hub.mu.Lock()
 	user.ChannelSubscribed = ""
@@ -125,11 +125,11 @@ func (hub *WebSocketHub) UnsubscribeUserFromChannel(reference_id string, userCon
 }
 
 // GetActiveDevices mengembalikan daftar perangkat yang sedang terhubung dengan pagination
-func (hub *WebSocketHub) GetActiveDevices(reference_id string, pageNumber int64, pageSize int64) []*DeviceClient {
+func (hub *WebSocketHub) GetActiveDevices(referenceId string, pageNumber int64, pageSize int64) []*DeviceClient {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - GetActiveDevices , page_number: %d, page_size: %d", pageNumber, pageSize))
+	logger.Info(referenceId, fmt.Sprintf("INFO - GetActiveDevices , page_number: %d, page_size: %d", pageNumber, pageSize))
 
 	// Konversi map ke slice
 	devices := make([]*DeviceClient, 0, len(hub.Devices))
@@ -157,7 +157,7 @@ func (hub *WebSocketHub) GetActiveDevices(reference_id string, pageNumber int64,
 }
 
 // GetTotalChannelSubscribers mengembalikan jumlah total subscriber untuk device tertentu
-func GetTotalChannelSubscribers(reference_id string, deviceID int64) (int64, error) {
+func GetTotalChannelSubscribers(referenceId string, deviceID int64) (int64, error) {
 	redisClient := GetRedisClient()
 	if redisClient == nil {
 		return 0, fmt.Errorf("redis client is not initialized or failed to reconnect")
@@ -165,13 +165,13 @@ func GetTotalChannelSubscribers(reference_id string, deviceID int64) (int64, err
 
 	// Nama channel berdasarkan deviceID
 	channelName := fmt.Sprintf("device:%d", deviceID)
-	logger.Info(reference_id, fmt.Sprintf("INFO - get total subscribers channel: %s", channelName))
+	logger.Info(referenceId, fmt.Sprintf("INFO - get total subscribers channel: %s", channelName))
 
 	// Menggunakan perintah Redis PUBSUB NUMSUB
 	ctx := context.Background()
 	result, err := redisClient.PubSubNumSub(ctx, channelName).Result()
 	if err != nil {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Failed to get subscribers for channel: %s, error: %v", channelName, err))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to get subscribers for channel: %s, error: %v", channelName, err))
 		return 0, err
 	}
 
@@ -181,6 +181,6 @@ func GetTotalChannelSubscribers(reference_id string, deviceID int64) (int64, err
 		totalSubscribers = 0
 	}
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - Total subscribers for %s: %d", channelName, totalSubscribers))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Total subscribers for %s: %d", channelName, totalSubscribers))
 	return totalSubscribers, nil
 }

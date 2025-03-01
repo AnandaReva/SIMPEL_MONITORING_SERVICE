@@ -55,29 +55,29 @@ type DeviceList struct {
 	DeviceNameLower    string `db:"name_lower" json:"device_name_lower"`
 }
 
-func Get_Device_List(reference_id string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{
 		ErrorCode:    "000000",
 		ErrorMessage: "",
 		Payload:      make(map[string]any),
 	}
 
-	logger.Info(reference_id, "INFO - Get_Device_List param: ", param)
+	logger.Info(referenceId, "INFO - Get_Device_List param: ", param)
 
 	// Validasi parameter pagination
 	pageSize, ok := param["page_size"].(float64)
 	if !ok || pageSize <= 0 {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Get_Device_List - Invalid page_size: %v", param["page_size"]))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Device_List - Invalid page_size: %v", param["page_size"]))
 		result.ErrorCode = "400001"
-		result.ErrorMessage = "Invalid page size"
+		result.ErrorMessage = "Invalid request"
 		return result
 	}
 
 	pageNumber, ok := param["page_number"].(float64)
 	if !ok || pageNumber < 1 {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - Get_Device_List - Invalid page_number: %v", param["page_number"]))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Device_List - Invalid page_number: %v", param["page_number"]))
 		result.ErrorCode = "400002"
-		result.ErrorMessage = "Invalid page number"
+		result.ErrorMessage = "Invalid request"
 		return result
 	}
 
@@ -91,7 +91,7 @@ func Get_Device_List(reference_id string, conn *sqlx.DB, userID int64, role stri
 
 	// Filter untuk search dengan LIKE query (case-insensitive)
 	if filter, ok := param["filter"].(string); ok && filter != "" {
-		logger.Info(reference_id, fmt.Sprintf("INFO - Applying Filter: %v", filter))
+		logger.Info(referenceId, fmt.Sprintf("INFO - Applying Filter: %v", filter))
 		filterClause := fmt.Sprintf(" AND (name ILIKE '%%%s%%' OR data::text ILIKE '%%%s%%')", filter, filter)
 		baseQuery += filterClause
 		countQuery += filterClause
@@ -109,7 +109,7 @@ func Get_Device_List(reference_id string, conn *sqlx.DB, userID int64, role stri
 	// Hitung total data setelah filter diterapkan
 	err := conn.Get(&totalData, countQuery)
 	if err != nil {
-		logger.Error(reference_id, "ERROR - Get_Device_List - Failed to get total data: ", err)
+		logger.Error(referenceId, "ERROR - Get_Device_List - Failed to get total data: ", err)
 		result.ErrorCode = "500002"
 		result.ErrorMessage = "Internal server error"
 		return result
@@ -123,20 +123,20 @@ func Get_Device_List(reference_id string, conn *sqlx.DB, userID int64, role stri
 
 	// Query utama dengan pagination
 	finalQuery := fmt.Sprintf("%s ORDER BY %s ASC LIMIT %d OFFSET %d;", baseQuery, orderBy, int(pageSize), offset)
-	logger.Info(reference_id, "INFO - Get_Device_List - Final Query: ", finalQuery)
+	logger.Info(referenceId, "INFO - Get_Device_List - Final Query: ", finalQuery)
 
 	err = conn.Select(&devices, finalQuery)
 	if err != nil {
-		logger.Error(reference_id, "ERROR - Query Execution Failed: ", err)
+		logger.Error(referenceId, "ERROR - Query Execution Failed: ", err)
 		result.ErrorCode = "500003"
 		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
 	totalPage := (totalData + int(pageSize) - 1) / int(pageSize)
-	logger.Info(reference_id, "INFO - Get_Device_List total data : ", totalData)
-	logger.Info(reference_id, "INFO - Get_Device_List total page : ", totalPage)
-	logger.Info(reference_id, "INFO - Get_Device_List devices : ", devices)
+	logger.Info(referenceId, "INFO - Get_Device_List total data : ", totalData)
+	logger.Info(referenceId, "INFO - Get_Device_List total page : ", totalPage)
+	logger.Info(referenceId, "INFO - Get_Device_List devices : ", devices)
 
 	// Hitung total halaman berdasarkan total data yang sudah difilter
 
@@ -144,6 +144,6 @@ func Get_Device_List(reference_id string, conn *sqlx.DB, userID int64, role stri
 	result.Payload["total_data"] = totalData
 	result.Payload["total_page"] = totalPage
 	result.Payload["status"] = "success"
-	logger.Info(reference_id, "INFO - Get_Device_List completed successfully")
+	logger.Info(referenceId, "INFO - Get_Device_List completed successfully")
 	return result
 }

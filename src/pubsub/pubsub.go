@@ -59,7 +59,7 @@ var (
 )
 
 // Inisialisasi WebSocketHub dengan Redis
-func NewWebSocketHub(reference_id string) (*WebSocketHub, error) {
+func NewWebSocketHub(referenceId string) (*WebSocketHub, error) {
 	redisClient := GetRedisClient()
 	if redisClient == nil {
 		return nil, fmt.Errorf("failed to initialize WebSocketHub: redis client is nil")
@@ -73,7 +73,7 @@ func NewWebSocketHub(reference_id string) (*WebSocketHub, error) {
 		redis:      redisClient,
 	}
 
-	logger.Info(reference_id, "INFO - New WebSocketHub initialized with Redis")
+	logger.Info(referenceId, "INFO - New WebSocketHub initialized with Redis")
 	return hub, nil
 }
 
@@ -123,17 +123,17 @@ func GetRedisClient() *redis.Client {
 }
 
 // GetWebSocketHub memastikan hanya ada satu instance WebSocketHub
-func GetWebSocketHub(reference_id string) (*WebSocketHub, error) {
+func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
 	var err error
 	wsHubOnce.Do(func() {
-		wsHub, err = NewWebSocketHub(reference_id)
+		wsHub, err = NewWebSocketHub(referenceId)
 		if err != nil {
 			wsHub = nil
-			logger.Error(reference_id, fmt.Sprintf("ERROR - Failed to initialize WebSocketHub: %v", err))
+			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to initialize WebSocketHub: %v", err))
 		}
 	})
 	if err != nil {
-		logger.Error(reference_id, "ERROR - WebSocketHub instance is nil after initialization")
+		logger.Error(referenceId, "ERROR - WebSocketHub instance is nil after initialization")
 	}
 	return wsHub, err
 }

@@ -22,9 +22,9 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 
 	// Context key untuk request ID
 	var ctxKey HTTPContextKey = "requestID"
-	referenceID, ok := r.Context().Value(ctxKey).(string)
+	referenceId, ok := r.Context().Value(ctxKey).(string)
 	if !ok {
-		referenceID = "unknown"
+		referenceId = "unknown"
 	}
 
 	// Set header untuk response JSON
@@ -38,7 +38,7 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 
 	// Validasi metode HTTP
 	if r.Method != http.MethodPost && r.Method != http.MethodGet {
-		logger.Error(referenceID, "Invalid method: ", r.Method)
+		logger.Error(referenceId, "Invalid method: ", r.Method)
 		response["error_code"] = "405000001"
 		response["error_message"] = "Method Not Allowed"
 		res, _ = utils.JSONencode(response)
@@ -60,11 +60,11 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Penanganan untuk metode POST
-	logger.Info(referenceID, "Request Method: POST")
+	logger.Info(referenceId, "Request Method: POST")
 
 	// Periksa apakah Content-Type adalah application/json
 	if contentType := r.Header.Get("Content-Type"); contentType != "application/json" {
-		logger.Error(referenceID, "Invalid content-type: ", contentType)
+		logger.Error(referenceId, "Invalid content-type: ", contentType)
 		response["error_code"] = "400000001"
 		response["error_message"] = "Bad Request. Not JSON"
 		res, _ = utils.JSONencode(response)
@@ -75,20 +75,20 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 	// Baca body POST
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		logger.Error(referenceID, "Failed to read body: ", err)
+		logger.Error(referenceId, "Failed to read body: ", err)
 		response["error_code"] = "400000002"
 		response["error_message"] = "Bad Request. Can't read POST body"
 		res, _ = utils.JSONencode(response)
 		http.Error(w, res, http.StatusBadRequest)
 		return
 	}
-	logger.Info(referenceID, "POST Body: ", string(body))
+	logger.Info(referenceId, "POST Body: ", string(body))
 
 	// Decode JSON body ke struct RequestBody
 	var req RequestBody
 	err = json.Unmarshal(body, &req)
 	if err != nil {
-		logger.Error(referenceID, "Failed to decode JSON: ", err)
+		logger.Error(referenceId, "Failed to decode JSON: ", err)
 		response["error_code"] = "400000003"
 		response["error_message"] = "Bad Request. Invalid JSON"
 		res, _ = utils.JSONencode(response)
@@ -102,11 +102,11 @@ func Greeting(w http.ResponseWriter, r *http.Request) {
 	} else {
 		response["message"] = "Hello, " + req.Name + "!"
 	}
-	response["reference_id"] = referenceID
+	response["referenceId"] = referenceId
 
 	// Encode response ke JSON dan kirimkan
 	res, _ = utils.JSONencode(response)
-	logger.Info(referenceID, "Response body: ", res)
+	logger.Info(referenceId, "Response body: ", res)
 	fmt.Fprint(w, res)
 
 }

@@ -45,15 +45,15 @@ type UserClientData struct {
 
 func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	ctxKey := "requestID"
-	referenceID, ok := r.Context().Value(ctxKey).(string)
+	referenceId, ok := r.Context().Value(ctxKey).(string)
 	if !ok {
-		referenceID = "unknown"
+		referenceId = "unknown"
 	}
 
 	startTime := time.Now()
 	defer func() {
 		duration := time.Since(startTime)
-		logger.Debug(referenceID, "DEBUG - Users_Create_Conn - Execution completed in:", duration)
+		logger.Debug(referenceId, "DEBUG - Users_Create_Conn - Execution completed in:", duration)
 	}()
 
 	// Ambil token, session_id dan device_id dari query parameter
@@ -62,7 +62,7 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.URL.Query().Get("device_id")
 
 	if token == "" || sessionID == "" || deviceID == "" {
-		logger.Error(referenceID, "WARN - Users_Create_Conn - Missing required parameters")
+		logger.Error(referenceId, "WARN - Users_Create_Conn - Missing required parameters")
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "400001",
 			ErrorMessage: "Invalid request",
@@ -70,14 +70,14 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info(referenceID, "token", token)
-	logger.Info(referenceID, "session_id", sessionID)
-	logger.Info(referenceID, "device_id", deviceID)
+	logger.Info(referenceId, "token", token)
+	logger.Info(referenceId, "session_id", sessionID)
+	logger.Info(referenceId, "device_id", deviceID)
 
 	// Mendapatkan koneksi database
 	conn, err := db.GetConnection()
 	if err != nil {
-		logger.Error(referenceID, "ERROR - Device_Create_Conn - Failed to get database connection:", err)
+		logger.Error(referenceId, "ERROR - Device_Create_Conn - Failed to get database connection:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500000",
 			ErrorMessage: "Internal Server Error",
@@ -93,14 +93,14 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	errQuery1 := conn.QueryRow("SELECT session_hash, user_id FROM sysuser.session WHERE session_id = $1", sessionID).Scan(&sessionHash, &userData.UserID)
 	if errQuery1 != nil {
 		if errQuery1 == sql.ErrNoRows {
-			logger.Error(referenceID, "WARN - Users_Create_Conn - Session not found: ", errQuery1)
+			logger.Error(referenceId, "WARN - Users_Create_Conn - Session not found: ", errQuery1)
 			utils.Response(w, utils.ResultFormat{
 				ErrorCode:    "401001",
 				ErrorMessage: "Unauthorized",
 			})
 			return
 		}
-		logger.Error(referenceID, "ERROR - Users_Create_Conn - Database errQuery1 failed: ", errQuery1)
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Database errQuery1 failed: ", errQuery1)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500001",
 			ErrorMessage: "Internal Server Error",
@@ -108,14 +108,14 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info(referenceID, "INFO - Users_Create_Conn - user id found: ", userData.UserID)
+	logger.Info(referenceId, "INFO - Users_Create_Conn - user id found: ", userData.UserID)
 
 	// Susun token yang harus diverifikasi
 	generatedToken, errHmac := crypto.GenerateHMAC(sessionID+deviceID, sessionHash)
-	logger.Info(referenceID, "generatedToken: ", generatedToken)
+	logger.Info(referenceId, "generatedToken: ", generatedToken)
 
 	if errHmac != "" {
-		logger.Error(referenceID, "WARN - Users_Create_Conn - error generating HMAC: ", errHmac)
+		logger.Error(referenceId, "WARN - Users_Create_Conn - error generating HMAC: ", errHmac)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500002",
 			ErrorMessage: "Internal Server Error",
@@ -126,7 +126,7 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	// Verifikasi token
 	if generatedToken != token {
-		logger.Error(referenceID, "WARN - Users_Create_Conn - Invalid token")
+		logger.Error(referenceId, "WARN - Users_Create_Conn - Invalid token")
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "401002",
 			ErrorMessage: "Unauthorized",
@@ -140,7 +140,7 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		Scan(&userData.Username, &userData.Role)
 
 	if errQuery2 != nil {
-		logger.Error(referenceID, "ERROR - Users_Create_Conn - Failed to retrieve user data:", errQuery2)
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to retrieve user data:", errQuery2)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500002",
 			ErrorMessage: "Internal Server Error",
@@ -149,9 +149,9 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dapatkan WebSocketHub
-	hub, err := pubsub.GetWebSocketHub(referenceID)
+	hub, err := pubsub.GetWebSocketHub(referenceId)
 	if err != nil {
-		logger.Error(referenceID, "ERROR - Users_Create_Conn - Failed to initialize WebSocketHub:", err)
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to initialize WebSocketHub:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500003",
 			ErrorMessage: "Internal Server Error",
@@ -162,7 +162,7 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	// Upgrade ke WebSocket
 	wsConn, err := userUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		logger.Error(referenceID, "ERROR - Users_Create_Conn - WebSocket upgrade failed:", err)
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - WebSocket upgrade failed:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500004",
 			ErrorMessage: "Internal Server Error",
@@ -171,25 +171,25 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tambah user ke hub
-	hub.AddUserToWebsocket(referenceID, wsConn, userData.UserID, userData.Username, userData.Role)
+	hub.AddUserToWebsocket(referenceId, wsConn, userData.UserID, userData.Username, userData.Role)
 
 	// Subscribe user ke channel Redis berdasarkan deviceId
-	hub.SubscribeUserToChannel(referenceID, wsConn, deviceID)
+	hub.SubscribeUserToChannel(referenceId, wsConn, deviceID)
 
 	go func() {
 		defer func() {
-			hub.RemoveUserFromWebSocket(referenceID, wsConn)
-			logger.Info(referenceID, "INFO - Users_Create_Conn - WebSocket connection closed")
+			hub.RemoveUserFromWebSocket(referenceId, wsConn)
+			logger.Info(referenceId, "INFO - Users_Create_Conn - WebSocket connection closed")
 		}()
 
 		for {
 			_, _, err := wsConn.ReadMessage()
 			if err != nil {
-				logger.Error(referenceID, "ERROR - Users_Create_Conn - WebSocket read error:", err)
+				logger.Error(referenceId, "ERROR - Users_Create_Conn - WebSocket read error:", err)
 				break
 			}
 		}
 	}()
 
-	logger.Info(referenceID, "INFO - WebSocket connection established for user:", userData.Username)
+	logger.Info(referenceId, "INFO - WebSocket connection established for user:", userData.Username)
 }

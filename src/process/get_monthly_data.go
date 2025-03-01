@@ -41,7 +41,7 @@ type MonthlyData struct {
 
 /////////!!! DONT SPECIFY ERROR MESSAGE TO CLIENT////////////////////////////
 
-func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+func GetMonthlyData(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{
 		ErrorCode:    "000000",
 		ErrorMessage: "",
@@ -51,7 +51,7 @@ func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role strin
 	// Validasi parameter
 	deviceID, ok := param["device_id"].(int64)
 	if !ok || deviceID <= 0 {
-		logger.Error(reference_id, "ERROR - GetMonthlyData - Invalid device_id")
+		logger.Error(referenceId, "ERROR - GetMonthlyData - Invalid device_id")
 		result.ErrorCode = "400001"
 		result.ErrorMessage = "Invalid request"
 		return result
@@ -59,7 +59,7 @@ func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role strin
 
 	year, ok := param["year"].(int16)
 	if !ok || year < 2000 {
-		logger.Error(reference_id, "ERROR - GetMonthlyData - Invalid year")
+		logger.Error(referenceId, "ERROR - GetMonthlyData - Invalid year")
 		result.ErrorCode = "400002"
 		result.ErrorMessage = "Invalid request"
 		return result
@@ -67,7 +67,7 @@ func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role strin
 
 	function, ok := param["function"].(string)
 	if !ok || (function != "sum" && function != "avg") {
-		logger.Error(reference_id, "ERROR - GetMonthlyData - Invalid function")
+		logger.Error(referenceId, "ERROR - GetMonthlyData - Invalid function")
 		result.ErrorCode = "400003"
 		result.ErrorMessage = "Invalid request"
 		return result
@@ -116,7 +116,7 @@ func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role strin
 	var monthlyData []MonthlyData
 	err := conn.Select(&monthlyData, query, startDate, endDate, deviceID)
 	if err != nil {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - GetMonthlyData - Query execution failed: %v", err))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - GetMonthlyData - Query execution failed: %v", err))
 		result.ErrorCode = "500001"
 		result.ErrorMessage = "Internal server error"
 		return result
@@ -128,7 +128,7 @@ func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role strin
 	AND tstamp < EXTRACT(EPOCH FROM TIMESTAMP $2) AND unit_id = $3;`
 	err = conn.Get(&totalRecords, totalQuery, startDate, endDate, deviceID)
 	if err != nil {
-		logger.Error(reference_id, fmt.Sprintf("ERROR - GetMonthlyData - Total records query failed: %v", err))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - GetMonthlyData - Total records query failed: %v", err))
 		result.ErrorCode = "500002"
 		result.ErrorMessage = "Internal server error"
 		return result
@@ -138,7 +138,7 @@ func GetMonthlyData(reference_id string, conn *sqlx.DB, userID int64, role strin
 	result.Payload["monthly_data"] = monthlyData
 	result.Payload["total_records"] = totalRecords
 
-	logger.Info(reference_id, fmt.Sprintf("INFO - Found %d monthly records, total %d records", len(monthlyData), totalRecords))
+	logger.Info(referenceId, fmt.Sprintf("INFO - Found %d monthly records, total %d records", len(monthlyData), totalRecords))
 
 	return result
 }

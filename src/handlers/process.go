@@ -25,7 +25,7 @@ var InitPrcs bool = false
 var prcsMap = make(map[string]prcs)
 
 type prcs struct {
-	function func(reference_id string, dbConn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat
+	function func(referenceId string, dbConn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat
 	class    string
 	role     []string /* ["guest", "system user", "system admin", "system master"],   */
 }
@@ -71,14 +71,14 @@ type UserInfo struct {
 
 func Process(w http.ResponseWriter, r *http.Request) {
 	var ctxKey HTTPContextKey = "requestID"
-	referenceID, ok := r.Context().Value(ctxKey).(string)
+	referenceId, ok := r.Context().Value(ctxKey).(string)
 	if !ok {
-		referenceID = "unknown"
+		referenceId = "unknown"
 	}
 
 	startTime := time.Now()
 	defer func() {
-		logger.Debug(referenceID, "DEBUG - Execution completed in:", time.Since(startTime))
+		logger.Debug(referenceId, "DEBUG - Execution completed in:", time.Since(startTime))
 	}()
 
 	initProcessMap()
@@ -91,10 +91,10 @@ func Process(w http.ResponseWriter, r *http.Request) {
 	processName := r.Header.Get("process")
 	if processName == "" {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "400001", ErrorMessage: "Invalid request"})
-		logger.Error(referenceID, "PROCESS - ERROR - Missing process name in header")
+		logger.Error(referenceId, "PROCESS - ERROR - Missing process name in header")
 		return
 	}
-	logger.Info(referenceID, "PROCECSS - INFO - process_name: ", processName)
+	logger.Info(referenceId, "PROCECSS - INFO - process_name: ", processName)
 
 	prc, exists := prcsMap[processName]
 	if !exists {
@@ -105,27 +105,27 @@ func Process(w http.ResponseWriter, r *http.Request) {
 	conn, err := db.GetConnection()
 	if err != nil {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "500000", ErrorMessage: "Internal server error"})
-		logger.Error(referenceID, "PROCESS - ERROR - Database connection error:", err)
+		logger.Error(referenceId, "PROCESS - ERROR - Database connection error:", err)
 		return
 	}
 	defer db.ReleaseConnection()
 
 	// Validasi sesi pengguna
-	userInfo, err := validateSession(r, conn, referenceID)
+	userInfo, err := validateSession(r, conn, referenceId)
 	if err != nil {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "401000", ErrorMessage: "Unauthorized"})
-		logger.Error(referenceID, "PROCESS - ERROR - error when validating user session : ", err)
+		logger.Error(referenceId, "PROCESS - ERROR - error when validating user session : ", err)
 		return
 	}
 
 	userIndoLogStr := fmt.Sprintf("USER ID : %d , USER ROLE: %s", userInfo.UserID, userInfo.UserRole)
 
-	logger.Info(referenceID, "INFO - ", userIndoLogStr)
+	logger.Info(referenceId, "INFO - ", userIndoLogStr)
 
 	// Validasi peran pengguna
 	if len(prc.role) > 0 && !utils.Contains(prc.role, userInfo.UserRole) {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "403000", ErrorMessage: "Forbidden"})
-		logger.Error(referenceID, "PROCESS ERROR - User does not have the required role")
+		logger.Error(referenceId, "PROCESS ERROR - User does not have the required role")
 		return
 	}
 
@@ -133,23 +133,23 @@ func Process(w http.ResponseWriter, r *http.Request) {
 	param, err = utils.Request(r)
 	if err != nil {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "400003", ErrorMessage: "Invalid request"})
-		logger.Error(referenceID, "ERROR - Failed to parse request body:", err)
+		logger.Error(referenceId, "ERROR - Failed to parse request body:", err)
 		return
 	}
 
 	// Validasi signature
-	if err := validateSignature(r, param, userInfo, referenceID); err != nil {
+	if err := validateSignature(r, param, userInfo, referenceId); err != nil {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "401002", ErrorMessage: "Unauthorized"})
-		logger.Error(referenceID, "ERROR -", err)
+		logger.Error(referenceId, "ERROR -", err)
 		return
 	}
-	logger.Info(referenceID, "INFO - SIGNATURE VALID")
+	logger.Info(referenceId, "INFO - SIGNATURE VALID")
 
-	result := prc.function(referenceID, conn, userInfo.UserID, userInfo.UserRole, param)
+	result := prc.function(referenceId, conn, userInfo.UserID, userInfo.UserRole, param)
 	utils.Response(w, result)
 }
 
-func validateSession(r *http.Request, conn *sqlx.DB, referenceID string) (UserInfo, error) {
+func validateSession(r *http.Request, conn *sqlx.DB, referenceId string) (UserInfo, error) {
 	sessionID := r.Header.Get("session_id")
 	if sessionID == "" {
 		return UserInfo{}, errors.New("unauthorized: Missing session information")
@@ -166,7 +166,7 @@ func validateSession(r *http.Request, conn *sqlx.DB, referenceID string) (UserIn
 	return userInfo, nil
 }
 
-func validateSignature(r *http.Request, param map[string]interface{}, userInfo UserInfo, referenceID string) error {
+func validateSignature(r *http.Request, param map[string]interface{}, userInfo UserInfo, referenceId string) error {
 	bodyRequest, err := json.Marshal(param)
 	if err != nil {
 		return errors.New("failed to marshal request body")
