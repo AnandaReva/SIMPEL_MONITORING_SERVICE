@@ -210,8 +210,9 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queryToInsertActivity := `INSERT INTO device.device_activity (unit_id, activity, tstamp) VALUES ($1, $2, EXTRACT(epoch FROM now())::bigint)`
-	err = tx.Get(&deviceIdToUpdate, queryToInsertActivity, deviceData.DeviceID, "Connect Device")
+	queryToInsertActivity := `INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, $2)`
+	_, err = tx.Exec(queryToInsertActivity, deviceData.DeviceID, "Connect Device")
+
 	if err != nil {
 		err := hub.RemoveDeviceFromWebSocket(referenceId, wsConn)
 		if err != nil {
@@ -280,12 +281,18 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 				logger.Error(referenceId, "ERROR - Change_Device_Status - Failed to remove device from WebSocket hub:", err)
 			}
 			// Update status perangkat setelah disconnect
-			queryToChangeStatus := `UPDATE device.unit SET st = $1 WHERE id = $2`
-			_, err = conn.Exec(queryToChangeStatus, 0, deviceData.DeviceID)
-			if err != nil {
-				logger.Error(referenceId, "ERROR - Change_Device_Status - Failed to update status after disconnect:", err)
+			maxRetries := 3
+			for i := 0; i < maxRetries; i++ {
+				_, err = conn.Exec(queryToChangeStatus, 0, deviceData.DeviceID)
+				if err == nil {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
 			}
-			logger.Info(referenceId, "INFO - Device_Create_Conn - WebSocket connection closed and status changed")
+			if err != nil {
+				logger.Error(referenceId, "ERROR - Change_Device_Status - Final attempt to update status failed:", err)
+			}
+
 		}()
 
 		for {

@@ -132,6 +132,7 @@ func Process(w http.ResponseWriter, r *http.Request) {
 	var param map[string]interface{}
 	param, err = utils.Request(r)
 	if err != nil {
+		logger.Info(referenceId, "INFO - SIGNATURE INVALID")
 		utils.Response(w, utils.ResultFormat{ErrorCode: "400003", ErrorMessage: "Invalid request"})
 		logger.Error(referenceId, "ERROR - Failed to parse request body:", err)
 		return
@@ -176,8 +177,14 @@ func validateSignature(r *http.Request, param map[string]interface{}, userInfo U
 	computedSignature, _ := crypto.GenerateHMAC(message, userInfo.SessionHash)
 	clientSignature := r.Header.Get("signature")
 
+	logger.Info(referenceId, "INFO - message:  ", message)
+	logger.Info(referenceId, "INFO - key:  ", userInfo.SessionHash)
+
+	logger.Debug(referenceId, "DEBUG - Computed signature:  ", computedSignature)
+	logger.Debug(referenceId, "DEBUG - Client signature:  ", clientSignature)
+
 	if computedSignature != clientSignature {
-		return errors.New("unauthorized: Invalid signature")
+		return errors.New("unauthorized: error signature dont match")
 	}
 
 	return nil

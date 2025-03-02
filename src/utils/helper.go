@@ -110,3 +110,17 @@ func Request(r *http.Request) (map[string]any, error) {
 
 	return data, nil
 }
+
+// MapToJSON converts a map to a JSON string
+func MapToJSON(data map[string]any) (string, error) {
+	if data == nil {
+		return "{}", nil
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		logger.Error("ERROR - MapToJSON - Failed converting map to JSON: ", err)
+		return "", err // Tidak mengembalikan "{}" agar lebih jelas jika terjadi error
+	}
+	return string(jsonData), nil
+}
