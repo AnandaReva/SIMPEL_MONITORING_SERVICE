@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
 	"monitoring_service/logger"
 	"monitoring_service/pubsub"
 	"monitoring_service/utils"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -74,6 +76,17 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	logger.Info(referenceId, "session_id", sessionID)
 	logger.Info(referenceId, "device_id", deviceID)
 
+	// Tambah user ke hub
+	deviceIDInt, err := strconv.ParseInt(deviceID, 10, 64)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Invalid deviceID:", err)
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "400002",
+			ErrorMessage: "Invalid deviceID",
+		})
+		return
+	}
+
 	// Mendapatkan koneksi database
 	conn, err := db.GetConnection()
 	if err != nil {
@@ -107,8 +120,9 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	logStr := fmt.Sprintf("session_hash: %s, user_id: %d", sessionHash, userData.UserID)
 
-	logger.Info(referenceId, "INFO - Users_Create_Conn - user id found: ", userData.UserID)
+	logger.Info(referenceId, "INFO - Users_Create_Conn - user data found : ", logStr)
 
 	// Susun token yang harus diverifikasi
 	generatedToken, errHmac := crypto.GenerateHMAC(sessionID+deviceID, sessionHash)
@@ -159,6 +173,16 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, exists := hub.DeviceConn[deviceIDInt]
+	if !exists {
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Users_Create_Conn - Device connection not found for device ID: %d", deviceIDInt))
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "400003",
+			ErrorMessage: "Invalid Request",
+		})
+		return
+	}
+
 	// Upgrade ke WebSocket
 	wsConn, err := userUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -170,15 +194,37 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tambah user ke hub
-	hub.AddUserToWebsocket(referenceId, wsConn, userData.UserID, userData.Username, userData.Role)
+	errAddUser := hub.AddUserToWebsocket(referenceId, wsConn, userData.UserID, userData.Username, userData.Role, deviceIDInt)
+	if errAddUser != nil {
 
-	// Subscribe user ke channel Redis berdasarkan deviceId
-	hub.SubscribeUserToChannel(referenceId, wsConn, deviceID)
+		wsConn.Close()
+
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to add user to WebSocket hub:", err)
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "500005",
+			ErrorMessage: "Internal Server Error",
+		})
+		return
+	}
+
+	errSubs := hub.SubscribeUserToChannel(referenceId, wsConn, deviceID)
+	if errSubs != nil {
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to subscribe user to Redis channel: %v", err))
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "500006",
+			ErrorMessage: "Internal Server Error",
+		})
+		return
+	}
 
 	go func() {
 		defer func() {
-			hub.RemoveUserFromWebSocket(referenceId, wsConn)
+			errRemoveUser := hub.RemoveUserFromWebSocket(referenceId, wsConn)
+			if errRemoveUser != nil {
+				logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to remove user from WebSocket hub:", errRemoveUser)
+				return
+			}
+
 			logger.Info(referenceId, "INFO - Users_Create_Conn - WebSocket connection closed")
 		}()
 

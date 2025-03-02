@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"monitoring_service/logger"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -32,14 +34,34 @@ func GetConnection() (*sqlx.DB, error) {
 
 	// Check if the pool has reached its maximum size
 	if dbpool.count >= dbpool.poolSize {
-		// If no connection is available, return an error
-		dbpool.count = dbpool.poolSize
-		return nil, errors.New("no connection available in pool")
-	} else {
-		// Increment active connection count and return the available connection
-		dbpool.count++
-		return dbpool.db, nil
+		logger.Error("DB", "ERROR - No connection available in pool, trying to reinitialize...")
+
+		// Reinitialize the database pool
+
+		DBDRIVER := os.Getenv("DBDRIVER")
+		DBNAME := os.Getenv("DBNAME")
+		DBHOST := os.Getenv("DBHOST")
+		DBUSER := os.Getenv("DBUSER")
+		DBPASS := os.Getenv("DBPASS")
+		DBPORT, errPort := strconv.Atoi(os.Getenv("DBPORT"))
+		DBPOOLSIZE, err := strconv.Atoi(os.Getenv("DBPOOLSIZE"))
+		if err != nil {
+			logger.Warning("MAIN", "Failed to parse DBPOOLSIZE, using default (20)", errPort)
+			DBPOOLSIZE = 20 // Default to 20 if parsing fails
+		}
+
+		errInit := InitDB(DBDRIVER, DBHOST, DBPORT, DBUSER, DBPASS, DBNAME, DBPOOLSIZE)
+		if err != nil {
+			logger.Error("DB", "Failed to reinitialize DB pool", errInit)
+			return nil, errors.New("failed to reinitialize database connection")
+		}
+
+		logger.Info("DB", "Database Connection Pool Reinitialized.")
 	}
+
+	// Increment active connection count and return the available connection
+	dbpool.count++
+	return dbpool.db, nil
 }
 
 // ReleaseConnection releases a database connection back to the pool.
@@ -58,19 +80,26 @@ func ReleaseConnection() {
 	}
 }
 
+// InitDB initializes the database connection pool with the provided parameters.
+// It sets up connection settings like the maximum number of open/idle connections
+// and the connection lifetime.
 func InitDB(driver string, host string, port int, user string, password string, dbname string, poolSize int) error {
 	var err error
 
+	// Create the connection string using the provided parameters
 	//	connStr := fmt.Sprintf("%s://%s:%s@%s:%d/%s", driver, user, password, host, port, dbname)
 	connStr := fmt.Sprintf("%s://%s:%s@%s:%d/%s?sslmode=disable", driver, user, password, host, port, dbname)
 	// Log the connection string for debugging (ensure this does not log sensitive info in production)
 	logger.Debug("DB", "CONNSTR : ", connStr)
+
+	// Establish a new database connection using the driver and connection string
 	dbpool.db, err = sqlx.Connect(driver, connStr)
 	if err != nil {
 		// If connection fails, return the error
 		return err
 	}
 
+	// Set the maximum number of open and idle connections in the pool
 	dbpool.db.SetMaxOpenConns(poolSize)
 	dbpool.db.SetMaxIdleConns(poolSize)
 

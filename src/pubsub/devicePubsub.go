@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"monitoring_service/logger"
+	"strconv"
 
 	"github.com/gorilla/websocket"
 )
@@ -17,7 +18,7 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 	// Cek apakah deviceID sudah memiliki koneksi aktif
 	if oldConn, exists := hub.DeviceConn[deviceID]; exists {
 		if oldConn != nil {
-			logger.Warning(referenceID, fmt.Sprintf("WARNING - Device %s reconnecting. Closing old connection.", deviceName))
+			logger.Warning(referenceID, fmt.Sprintf("WARNING - AddDeviceToWebSocket - Device %s reconnecting. Closing old connection.", deviceName))
 			_ = oldConn.Close() // Pastikan koneksi lama ditutup dengan aman
 		}
 		delete(hub.Devices, oldConn)
@@ -26,40 +27,41 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 
 	// Validasi koneksi baru sebelum menambahkannya
 	if conn == nil {
-		errMsg := fmt.Sprintf("ERROR - WebSocket connection is nil for device: %s", deviceName)
+		errMsg := fmt.Sprintf("ERROR - AddDeviceToWebSocket - WebSocket connection is nil for device: %s", deviceName)
 		logger.Error(referenceID, errMsg)
 		return errors.New(errMsg)
 	}
 
 	// Tambahkan device baru ke daftar WebSocket
 	hub.Devices[conn] = &DeviceClient{
-		DeviceID:   deviceID,
-		DeviceName: deviceName,
-		Conn:       conn,
+		DeviceID:         deviceID,
+		DeviceName:       deviceName,
+		Conn:             conn,
+		ChannelToPublish: fmt.Sprintf("device:%d", deviceID), // Set channel untuk device
 	}
 
 	// Simpan referensi deviceID ke koneksi baru
 	hub.DeviceConn[deviceID] = conn
 
-	logger.Info(referenceID, fmt.Sprintf("INFO - New device connected - DeviceID: %d, DeviceName: %s", deviceID, deviceName))
-	logger.Info(referenceID, fmt.Sprintf("INFO - Total devices connected: %d", len(hub.Devices)))
+	logger.Info(referenceID, fmt.Sprintf("INFO - AddDeviceToWebSocket - New device connected - DeviceID: %d, DeviceName: %s", deviceID, deviceName))
+	logger.Info(referenceID, fmt.Sprintf("INFO - AddDeviceToWebSocket - Total devices connected: %d", len(hub.Devices)))
 
 	return nil
 }
-
-
-// Menghapus Device
 func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *websocket.Conn) error {
 	hub.mu.Lock()
 	device, exists := hub.Devices[conn]
 	hub.mu.Unlock()
 
 	if !exists {
-		logger.Warning(referenceId, "WARNING - Attempted to remove non-existent device")
+		logger.Warning(referenceId, "WARNING - RemoveDeviceFromWebSocket- Attempted to remove non-existent device")
 		return errors.New("attempted to remove non-existent device")
 	}
 
-	logger.Info(referenceId, fmt.Sprintf("INFO - Removing device ID: %d, DeviceName: %s", device.DeviceID, device.DeviceName))
+	logger.Info(referenceId, fmt.Sprintf("INFO - RemoveDeviceFromWebSocket - Removing device ID: %d, DeviceName: %s", device.DeviceID, device.DeviceName))
+
+	// Ambil channel yang digunakan oleh device ini sebelum menghapus device
+	channel := device.ChannelToPublish
 
 	hub.mu.Lock()
 	delete(hub.Devices, conn)
@@ -68,7 +70,51 @@ func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *web
 
 	conn.Close()
 
-	logger.Info(referenceId, fmt.Sprintf("INFO - Successfully removed device ID: %d", device.DeviceID))
+	logger.Info(referenceId, fmt.Sprintf("INFO - - RemoveDeviceFromWebSocket - Successfully removed device ID: %d", device.DeviceID))
+
+	// Jika device memiliki channel untuk publish, putuskan semua user yang subscribe ke channel itu
+	if channel != "" {
+		logger.Info(referenceId, fmt.Sprintf("INFO - RemoveDeviceFromWebSocket - Disconnecting users subscribed to channel: %s", channel))
+		hub.DisconnectUsersByChannel(referenceId, channel)
+	}
+
+	return nil
+}
+
+func (hub *WebSocketHub) DisconnectUsersByChannel(referenceId, channel string) error {
+	hub.mu.Lock()
+	conns, exists := hub.ChannelUsers[channel]
+	if !exists {
+		hub.mu.Unlock()
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - DisconnectUsersByChannel - No users found for channel: %s", channel))
+		return errors.New("no users found for channel")
+	}
+	delete(hub.ChannelUsers, channel) // Hapus channel dari daftar setelah disconnect
+	hub.mu.Unlock()
+
+	// Unsubscribe Redis (jika ada PubSub yang terhubung)
+	if hub.redis != nil {
+		pubsub := hub.redis.Subscribe(context.Background(), channel)
+		_ = pubsub.Unsubscribe(context.Background(), channel)
+		_ = pubsub.Close()
+	}
+
+	// Tutup semua koneksi WebSocket user di channel ini
+	for _, conn := range conns {
+		userID := "unknown" // Default kalau tidak ada info user
+		if u, ok := hub.Users[conn]; ok {
+			userID = strconv.FormatInt(u.UserID, 10) // Sesuaikan dengan field user ID
+		}
+
+		logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectUsersByChannel - Disconnecting user: %s from channel: %s", userID, channel))
+
+		conn.Close()
+		hub.mu.Lock()
+		delete(hub.Users, conn)
+		hub.mu.Unlock()
+	}
+
+	logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectUsersByChannel - Disconnected all users from channel: %s", channel))
 	return nil
 }
 
@@ -82,10 +128,10 @@ func (hub *WebSocketHub) DevicePublishToChannel(referenceId string, deviceID int
 
 	ctx := context.Background()
 	channelName := fmt.Sprintf("device:%d", deviceID)
-	logger.Info(referenceId, fmt.Sprintf("INFO - Publishing to channel: %s", channelName))
+	logger.Info(referenceId, fmt.Sprintf("INFO - DevicePublishToChannel - Publishing to channel: %s", channelName))
 
 	if err := redisClient.Publish(ctx, channelName, data).Err(); err != nil {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to publish to Redis: %v", err))
+		logger.Error(referenceId, fmt.Sprintf("ERROR - DevicePublishToChannel - Failed to publish to Redis: %v", err))
 		return err
 	}
 
