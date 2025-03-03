@@ -156,13 +156,23 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	//////////////////////////////// 	//////////////////////////////////
 
+	/* 	hub, err := pubsub.GetWebSocketHub(referenceId)
+	   	if err != nil {
+
+	   		logger.Error(referenceId, "ERROR - Device_Create_Conn - Failed to initialize WebSocketHub:", err)
+	   		utils.Response(w, utils.ResultFormat{
+	   			ErrorCode:    "500003",
+	   			ErrorMessage: "Internal Server error",
+	   		})
+	   		return
+	   	} */
+
 	hub, err := pubsub.GetWebSocketHub(referenceId)
 	if err != nil {
-
-		logger.Error(referenceId, "ERROR - Device_Create_Conn - Failed to initialize WebSocketHub:", err)
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to initialize WebSocketHub:", err)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500003",
-			ErrorMessage: "Internal Server error",
+			ErrorMessage: "Internal Server Error",
 		})
 		return
 	}

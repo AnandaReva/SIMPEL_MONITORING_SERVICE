@@ -62,12 +62,42 @@ var (
 	wsHubOnce   sync.Once
 )
 
+func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
+	var err error
+
+	logger.Debug(referenceId, "GetWebSocketHub - 1")
+	wsHubOnce.Do(func() {
+
+		logger.Debug(referenceId, "GetWebSocketHub - 1.2")
+		wsHub, err = NewWebSocketHub(referenceId) // error here
+		logger.Debug(referenceId, "GetWebSocketHub - 1.3")
+		if err != nil {
+
+			logger.Debug(referenceId, "GetWebSocketHub - 1.4")
+			wsHub = nil
+			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to initialize WebSocketHub: %v", err))
+		}
+	})
+
+	logger.Debug(referenceId, "GetWebSocketHub - 2")
+	if err != nil {
+		logger.Error(referenceId, "ERROR - WebSocketHub instance is nil after initialization")
+	}
+
+	logger.Debug(referenceId, "GetWebSocketHub - 3")
+	return wsHub, err
+}
+
 // Inisialisasi WebSocketHub dengan Redis
 func NewWebSocketHub(referenceId string) (*WebSocketHub, error) {
+
+	logger.Debug(referenceId, "NewWebSocketHub - 1")
 	redisClient := GetRedisClient()
-	if redisClient == nil {
+	if redisClient == nil { // here
 		return nil, fmt.Errorf("failed to initialize WebSocketHub: redis client is nil")
 	}
+
+	logger.Debug(referenceId, "NewWebSocketHub - 2")
 
 	hub := &WebSocketHub{
 		Devices:      make(map[*websocket.Conn]*DeviceClient),
@@ -77,6 +107,8 @@ func NewWebSocketHub(referenceId string) (*WebSocketHub, error) {
 		ChannelUsers: make(map[string][]*websocket.Conn),
 		redis:        redisClient,
 	}
+
+	logger.Debug(referenceId, "NewWebSocketHub - 3")
 
 	logger.Info(referenceId, "INFO - New WebSocketHub initialized with Redis")
 	return hub, nil
@@ -114,21 +146,20 @@ func GetRedisClient() *redis.Client {
 
 	if RedisClient == nil {
 		logger.Error("REDIS", "ERROR - Redis client is not initialized")
-		return nil
-	}
 
-	RDHOST := os.Getenv("RDHOST")
-	RDPASS := os.Getenv("RDPASS")
-	RDDB, errConv := strconv.Atoi(os.Getenv("RDDB"))
-	if errConv != nil {
-		logger.Warning("MAIN", "Failed to parse RDDB, using default (0)", errConv)
-		RDDB = 0 // Default to 20 if parsing fails
-	}
+		// Inisialisasi ulang Redis,
+		DHOST := os.Getenv("RDHOST")
+		RDPASS := os.Getenv("RDPASS")
+		RDDB, errConv := strconv.Atoi(os.Getenv("RDDB"))
+		if errConv != nil {
+			logger.Error("REDIS", fmt.Sprintf("ERROR - Failed to convert RDDB: %v", errConv))
+			return nil
+		}
 
-	errInit := InitRedisConn(RDHOST, RDPASS, RDDB)
-	if errInit != nil {
-		logger.Error("REDIS", "Failed to initialize Redis client", errInit)
-		return nil
+		if err := InitRedisConn(DHOST, RDPASS, RDDB); err != nil {
+			logger.Error("REDIS", fmt.Sprintf("ERROR - Failed to reconnect to Redis: %v", err))
+			return nil
+		}
 	}
 
 	if _, err := RedisClient.Ping(context.Background()).Result(); err != nil {
@@ -186,17 +217,3 @@ func GetRedisClient() *redis.Client {
 // }
 
 // GetWebSocketHub memastikan hanya ada satu instance WebSocketHub
-func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
-	var err error
-	wsHubOnce.Do(func() {
-		wsHub, err = NewWebSocketHub(referenceId)
-		if err != nil {
-			wsHub = nil
-			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to initialize WebSocketHub: %v", err))
-		}
-	})
-	if err != nil {
-		logger.Error(referenceId, "ERROR - WebSocketHub instance is nil after initialization")
-	}
-	return wsHub, err
-}
