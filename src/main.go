@@ -126,7 +126,7 @@ func main() {
 	DBPOOLSIZE, err := strconv.Atoi(os.Getenv("DBPOOLSIZE"))
 	if err != nil {
 		logger.Warning("MAIN", "Failed to parse DBPOOLSIZE, using default (20), reason: ", err)
-		DBPOOLSIZE = 20 // Default to 20 if parsing fails
+		DBPOOLSIZE = 100 // Default to 20 if parsing fails
 	}
 
 	if len(DBDRIVER) == 0 {

@@ -99,6 +99,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.ReleaseConnection()
 
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Attempting to validate credentials")
+
 	// Ambil credential dari database
 	var deviceData DeviceClientData
 	query := `SELECT id, name, salt, salted_password FROM device.unit WHERE name = $1`
@@ -124,6 +126,9 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logStr := fmt.Sprintf("salt: %s, password: %s", deviceData.Salt, password)
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Creating saltedPassword ", logStr)
+
 	// Generate salted password
 	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, deviceData.Salt, 32, configs.GetPBKDF2Iterations())
 	if errSaltedPass != "" {
@@ -135,6 +140,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Salted password generated:", saltedPassword)
+
 	// Verifikasi password
 	if saltedPassword != deviceData.SaltedPassword {
 		logger.Error(referenceId, "ERROR - Invalid password")
@@ -144,6 +151,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Valid credentials Connectting to ws")
 
 	//////////////////////////////// 	//////////////////////////////////
 
@@ -158,6 +167,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Attempting to upgrade connection to WebSocket")
+
 	// Upgrade ke WebSocket
 	wsConn, err := deviceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -168,6 +179,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - WebSocket upgrade successful")
 
 	// Tambahkan perangkat ke hub WebSocket
 	errWs := hub.AddDeviceToWebSocket(referenceId, wsConn, deviceData.DeviceID, deviceData.DeviceName)
@@ -178,6 +190,8 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			ErrorMessage: "Internal server error",
 		})
 	}
+
+	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Device connected successfully")
 
 	tx, errTx := conn.Beginx()
 	if errTx != nil {

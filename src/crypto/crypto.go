@@ -4,7 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
+	"monitoring_service/logger"
 
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -19,9 +19,7 @@ func GenerateHMAC(text string, key string) (string, string) {
 	return hex.EncodeToString(h.Sum(nil)), ""
 }
 
-
-
-// GeneratePBKDF2 replaces Argon2 for password hashing
+// GeneratePBKDF2 password hashing
 func GeneratePBKDF2(text string, salt string, length int, iterations int) (string, string) {
 	if text == "" || salt == "" {
 		return "", "Missing text or salt"
@@ -33,10 +31,10 @@ func GeneratePBKDF2(text string, salt string, length int, iterations int) (strin
 	// Debug: Cetak hasil dalam bentuk hex untuk memastikan sesuai dengan frontend
 	hashHex := hex.EncodeToString(hash)
 
-	fmt.Println("Text (password):", text)
-	fmt.Println("Salt:", salt)
-	fmt.Println("Iterations:", iterations)
-	fmt.Println("Derived Key (Hex):", hashHex)
+	logger.Debug("GeneratePBKDF2", "DEBUG - GeneratePBKDF2 - Text(message):", text)
+	logger.Debug("GeneratePBKDF2", "DEBUG - GeneratePBKDF2 - Salt :", salt)
+	logger.Debug("GeneratePBKDF2", "DEBUG - GeneratePBKDF2 - Iterations:", iterations)
+	logger.Debug("GeneratePBKDF2", "DEBUG - GeneratePBKDF2 - Derived Key (Hex):", hashHex)
 
 	return hashHex, ""
 }
