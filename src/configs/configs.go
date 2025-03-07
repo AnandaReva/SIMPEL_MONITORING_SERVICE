@@ -1,6 +1,6 @@
 package configs
 
-var workerInterval int16 = 60    // second
+var workerInterval int16 = 30    // second
 var memoryLimit int64 = 52428800 // 50 mb
 var PBKDF2Iterations int = 15000
 var clientURL string = "http://localhost:3000"

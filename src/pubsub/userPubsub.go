@@ -87,9 +87,9 @@ func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *we
 
 	if !exists {
 		logger.Error(referenceId, "User not found, cannot subscribe")
-		hub.mu.Unlock() // Jangan lupa unlock sebelum return
 		return fmt.Errorf("user not found")
 	}
+
 	if hub.redis == nil {
 		logger.Error(referenceId, "Redis client is nil")
 		return fmt.Errorf("redis client is not initialized or failed to reconnect")
@@ -97,16 +97,22 @@ func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *we
 
 	channelName := fmt.Sprintf("device:%s", deviceID)
 	ctx, cancel := context.WithCancel(context.Background())
-	userClient.PubSub = hub.redis.Subscribe(ctx, channelName)
+	pubSub := hub.redis.Subscribe(ctx, channelName)
+
+	userClient.PubSub = pubSub
 	userClient.ChannelSubscribed = deviceID
 	userClient.PubSubCancel = cancel
 
 	go func() {
 		defer hub.UnsubscribeUserFromChannel(referenceId, userConn)
-		ch := userClient.PubSub.Channel()
+		ch := pubSub.Channel()
 		for {
 			select {
-			case msg := <-ch:
+			case msg, ok := <-ch:
+				if !ok {
+					logger.Error(referenceId, "Redis channel closed")
+					return
+				}
 				if err := userConn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
 					logger.Error(referenceId, fmt.Sprintf("Failed to send message to user %s: %v", userClient.Username, err))
 					hub.RemoveUserFromWebSocket(referenceId, userConn)
@@ -117,6 +123,7 @@ func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *we
 			}
 		}
 	}()
+
 	logger.Info(referenceId, fmt.Sprintf("INFO - User %s subscribed to channel: %s", userClient.Username, deviceID))
 	return nil
 }

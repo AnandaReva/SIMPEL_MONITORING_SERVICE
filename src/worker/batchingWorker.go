@@ -51,7 +51,7 @@ simpel=> \d device.data;
 --------------+--------------------------+-----------+----------+------------------------------------------
  id           | bigint                   |           | not null | nextval('device.data2_id_seq'::regclass)
  unit_id      | bigint                   |           | not null |
- tstamp       | timestamp with time zone |           | not null | now()
+ tstamp       | timestamp |           | not null | now()
  voltage      | double precision         |           | not null |
  current      | double precision         |           | not null |
  power        | double precision         |           | not null |
@@ -152,7 +152,7 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 	}
 }
 
-func fetchRedisBuffer() ([]DeviceData, error) {
+/* func fetchRedisBuffer() ([]DeviceData, error) {
 	ctx := context.Background()
 	redisClient := pubsub.GetRedisClient()
 	if redisClient == nil {
@@ -199,6 +199,130 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 			Frequency:    deviceData.Frequency,
 			Power_factor: deviceData.Power_factor,
 		})
+	}
+
+	return parsedData, nil
+} */
+
+/* func fetchRedisBuffer() ([]DeviceData, error) {
+	ctx := context.Background()
+	redisClient := pubsub.GetRedisClient()
+	if redisClient == nil {
+		return nil, fmt.Errorf("redis client is not initialized")
+	}
+
+	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
+	}
+
+	var parsedData []DeviceData
+	for _, item := range data {
+		var deviceData struct {
+			Device_Id    int64   `json:"Device_Id"`
+			Tstamp       string  `json:"Tstamp"`
+			Voltage      float64 `json:"Voltage"`
+			Current      float64 `json:"Current"`
+			Power        float64 `json:"Power"`
+			Energy       float64 `json:"Energy"`
+			Frequency    float64 `json:"Frequency"`
+			Power_factor float64 `json:"Power_factor"`
+		}
+
+		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v - DATA: %s", err, item))
+			redisClient.LRem(ctx, "buffer:device_data", 1, item)
+			continue
+		}
+
+		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
+		if err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
+			redisClient.LRem(ctx, "buffer:device_data", 1, item)
+			continue
+		}
+
+		parsedData = append(parsedData, DeviceData{
+			Device_Id:    deviceData.Device_Id,
+			Tstamp:       parsedTime.UTC(),
+			Voltage:      deviceData.Voltage,
+			Current:      deviceData.Current,
+			Power:        deviceData.Power,
+			Energy:       deviceData.Energy,
+			Frequency:    deviceData.Frequency,
+			Power_factor: deviceData.Power_factor,
+		})
+	}
+
+	return parsedData, nil
+}
+*/
+
+func fetchRedisBuffer() ([]DeviceData, error) {
+	ctx := context.Background()
+	redisClient := pubsub.GetRedisClient()
+	if redisClient == nil {
+		return nil, fmt.Errorf("redis client is not initialized")
+	}
+
+	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
+	}
+
+	var parsedData []DeviceData
+	var invalidItems []string // Menyimpan item invalid untuk dihapus sekaligus
+
+	for _, item := range data {
+		var deviceData struct {
+			Device_Id    int64   `json:"Device_Id"`
+			Tstamp       string  `json:"Tstamp"`
+			Voltage      float64 `json:"Voltage"`
+			Current      float64 `json:"Current"`
+			Power        float64 `json:"Power"`
+			Energy       float64 `json:"Energy"`
+			Frequency    float64 `json:"Frequency"`
+			Power_factor float64 `json:"Power_factor"`
+		}
+
+		// Coba decode JSON
+		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v - DATA: %s", err, item))
+			invalidItems = append(invalidItems, item)
+			continue
+		}
+
+		// Coba parse timestamp
+		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
+		if err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
+			invalidItems = append(invalidItems, item)
+			continue
+		}
+
+		// Data valid, tambahkan ke parsedData
+		parsedData = append(parsedData, DeviceData{
+			Device_Id:    deviceData.Device_Id,
+			Tstamp:       parsedTime.UTC(),
+			Voltage:      deviceData.Voltage,
+			Current:      deviceData.Current,
+			Power:        deviceData.Power,
+			Energy:       deviceData.Energy,
+			Frequency:    deviceData.Frequency,
+			Power_factor: deviceData.Power_factor,
+		})
+	}
+
+	// Hapus semua data invalid dari Redis dalam satu pipeline
+	if len(invalidItems) > 0 {
+		pipe := redisClient.Pipeline()
+		for _, item := range invalidItems {
+			pipe.LRem(ctx, "buffer:device_data", 1, item)
+		}
+		_, err := pipe.Exec(ctx)
+		if err != nil {
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Failed to remove invalid items from Redis: %v", err))
+		}
 	}
 
 	return parsedData, nil
