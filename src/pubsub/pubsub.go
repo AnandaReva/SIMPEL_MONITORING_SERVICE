@@ -63,30 +63,29 @@ var (
 )
 
 func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
-	var err error
+	var newErr error
 
 	logger.Debug(referenceId, "GetWebSocketHub - 1")
 	wsHubOnce.Do(func() {
-
 		logger.Debug(referenceId, "GetWebSocketHub - 1.2")
-		wsHub, err = NewWebSocketHub(referenceId) // error here
+		wsHub, newErr = NewWebSocketHub(referenceId)
 		logger.Debug(referenceId, "GetWebSocketHub - 1.3")
-		if err != nil {
-
+		if newErr != nil {
 			logger.Debug(referenceId, "GetWebSocketHub - 1.4")
 			wsHub = nil
-			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to initialize WebSocketHub: %v", err))
+			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to initialize WebSocketHub: %v", newErr))
 		}
 	})
 
-	logger.Debug(referenceId, "GetWebSocketHub - 2")
-	if err != nil {
+	if newErr != nil {
 		logger.Error(referenceId, "ERROR - WebSocketHub instance is nil after initialization")
+		return nil, newErr
 	}
 
 	logger.Debug(referenceId, "GetWebSocketHub - 3")
-	return wsHub, err
+	return wsHub, nil
 }
+
 
 // Inisialisasi WebSocketHub dengan Redis
 func NewWebSocketHub(referenceId string) (*WebSocketHub, error) {
@@ -170,50 +169,3 @@ func GetRedisClient() *redis.Client {
 
 	return RedisClient
 }
-
-// InitRedisConn menginisialisasi Redis client
-// func InitRedisConn(host, pass string, db int) error {
-// 	redisMu.Lock()
-// 	defer redisMu.Unlock()
-
-// 	if RedisClient != nil {
-// 		return nil
-// 	}
-
-// 	client := redis.NewClient(&redis.Options{
-// 		Addr:     host,
-// 		Password: pass,
-// 		DB:       db,
-// 	})
-
-// 	if _, err := client.Ping(context.Background()).Result(); err != nil {
-// 		logger.Error("REDIS", fmt.Sprintf("ERROR - Redis connection failed: %v", err))
-// 		client.Close()
-// 		return err
-// 	}
-
-// 	RedisClient = client
-// 	logger.Info("REDIS", "INFO - Successfully connected to Redis")
-// 	return nil
-// }
-
-// GetRedisClient memastikan Redis client aktif
-// func GetRedisClient() *redis.Client {
-// 	redisMu.Lock()
-// 	defer redisMu.Unlock()
-
-// 	if RedisClient == nil {
-// 		logger.Error("REDIS", "ERROR - Redis client is not initialized")
-// 		return nil
-// 	}
-
-// 	if _, err := RedisClient.Ping(context.Background()).Result(); err != nil {
-// 		logger.Error("REDIS", "ERROR - Redis connection lost. Reconnecting...")
-// 		RedisClient.Close()
-// 		RedisClient = nil
-// 	}
-
-// 	return RedisClient
-// }
-
-// GetWebSocketHub memastikan hanya ada satu instance WebSocketHub

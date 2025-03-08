@@ -293,12 +293,13 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 		}
 
 		// Coba parse timestamp
-		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
+		parsedTime, err := time.Parse("2006-01-02 15:04:05", deviceData.Tstamp)
 		if err != nil {
 			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
 			invalidItems = append(invalidItems, item)
 			continue
 		}
+		
 
 		// Data valid, tambahkan ke parsedData
 		parsedData = append(parsedData, DeviceData{

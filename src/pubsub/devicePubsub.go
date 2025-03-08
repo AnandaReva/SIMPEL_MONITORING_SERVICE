@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"monitoring_service/logger"
-	"strconv"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,66 +14,58 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
-	// Cek apakah deviceID sudah memiliki koneksi aktif
-	if oldConn, exists := hub.DeviceConn[deviceID]; exists {
-		if oldConn != nil {
-			logger.Warning(referenceID, fmt.Sprintf("WARNING - AddDeviceToWebSocket - Device %s reconnecting. Closing old connection.", deviceName))
-			_ = oldConn.Close() // Pastikan koneksi lama ditutup dengan aman
-		}
-		delete(hub.Devices, oldConn)
-		delete(hub.DeviceConn, deviceID)
+	// Pastikan tidak ada koneksi lain yang sedang ditambahkan
+	if _, exists := hub.DeviceConn[deviceID]; exists {
+		logger.Warning(referenceID, fmt.Sprintf("WARNING - AddDeviceToWebSocket - Device %s already connected, closing old connection.", deviceName))
+		hub.RemoveDeviceFromWebSocket(referenceID, hub.DeviceConn[deviceID])
 	}
 
-	// Validasi koneksi baru sebelum menambahkannya
+	// Validasi koneksi baru
 	if conn == nil {
 		errMsg := fmt.Sprintf("ERROR - AddDeviceToWebSocket - WebSocket connection is nil for device: %s", deviceName)
 		logger.Error(referenceID, errMsg)
 		return errors.New(errMsg)
 	}
 
-	// Tambahkan device baru ke daftar WebSocket
-	hub.Devices[conn] = &DeviceClient{
+	// Tambahkan device baru ke daftar WebSocket secara atomik
+	device := &DeviceClient{
 		DeviceID:         deviceID,
 		DeviceName:       deviceName,
 		Conn:             conn,
-		ChannelToPublish: fmt.Sprintf("device:%d", deviceID), // Set channel untuk device
+		ChannelToPublish: fmt.Sprintf("device:%d", deviceID),
 	}
 
-	// Simpan referensi deviceID ke koneksi baru
+	hub.Devices[conn] = device
 	hub.DeviceConn[deviceID] = conn
 
 	logger.Info(referenceID, fmt.Sprintf("INFO - AddDeviceToWebSocket - New device connected - DeviceID: %d, DeviceName: %s", deviceID, deviceName))
-	logger.Info(referenceID, fmt.Sprintf("INFO - AddDeviceToWebSocket - Total devices connected: %d", len(hub.Devices)))
-
 	return nil
 }
+
 func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *websocket.Conn) error {
 	hub.mu.Lock()
 	device, exists := hub.Devices[conn]
-	hub.mu.Unlock()
-
 	if !exists {
-		logger.Warning(referenceId, "WARNING - RemoveDeviceFromWebSocket- Attempted to remove non-existent device")
+		hub.mu.Unlock()
+		logger.Warning(referenceId, "WARNING - RemoveDeviceFromWebSocket - Attempted to remove non-existent device")
 		return errors.New("attempted to remove non-existent device")
 	}
 
-	logger.Info(referenceId, fmt.Sprintf("INFO - RemoveDeviceFromWebSocket - Removing device ID: %d, DeviceName: %s", device.DeviceID, device.DeviceName))
-
-	// Ambil channel yang digunakan oleh device ini sebelum menghapus device
+	// Ambil channel sebelum menghapus device
 	channel := device.ChannelToPublish
 
-	hub.mu.Lock()
+	// Hapus device dari map sebelum menutup koneksi
 	delete(hub.Devices, conn)
-	delete(hub.DeviceConn, device.DeviceID) // Hapus referensi dari DeviceConn
+	delete(hub.DeviceConn, device.DeviceID)
 	hub.mu.Unlock()
 
+	// Tutup koneksi WebSocket
 	conn.Close()
 
-	logger.Info(referenceId, fmt.Sprintf("INFO - - RemoveDeviceFromWebSocket - Successfully removed device ID: %d", device.DeviceID))
+	logger.Info(referenceId, fmt.Sprintf("INFO - RemoveDeviceFromWebSocket - Successfully removed device ID: %d", device.DeviceID))
 
-	// Jika device memiliki channel untuk publish, putuskan semua user yang subscribe ke channel itu
+	// Jika device memiliki channel, putuskan semua user yang subscribe ke channel itu
 	if channel != "" {
-		logger.Info(referenceId, fmt.Sprintf("INFO - RemoveDeviceFromWebSocket - Disconnecting users subscribed to channel: %s", channel))
 		hub.DisconnectUsersByChannel(referenceId, channel)
 	}
 
@@ -89,29 +80,24 @@ func (hub *WebSocketHub) DisconnectUsersByChannel(referenceId, channel string) e
 		logger.Warning(referenceId, fmt.Sprintf("WARNING - DisconnectUsersByChannel - No users found for channel: %s", channel))
 		return errors.New("no users found for channel")
 	}
-	delete(hub.ChannelUsers, channel) // Hapus channel dari daftar setelah disconnect
+	delete(hub.ChannelUsers, channel) // Hapus channel dari daftar
 	hub.mu.Unlock()
 
-	// Unsubscribe Redis (jika ada PubSub yang terhubung)
+	// Unsubscribe dari Redis di luar blok yang terkunci
 	if hub.redis != nil {
 		pubsub := hub.redis.Subscribe(context.Background(), channel)
-		_ = pubsub.Unsubscribe(context.Background(), channel)
+		if err := pubsub.Unsubscribe(context.Background(), channel); err != nil {
+			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to unsubscribe from Redis: %v", err))
+		}
 		_ = pubsub.Close()
 	}
 
-	// Tutup semua koneksi WebSocket user di channel ini
+	// Tutup semua koneksi WebSocket user
 	for _, conn := range conns {
-		userID := "unknown" // Default kalau tidak ada info user
-		if u, ok := hub.Users[conn]; ok {
-			userID = strconv.FormatInt(u.UserID, 10) // Sesuaikan dengan field user ID
-		}
-
-		logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectUsersByChannel - Disconnecting user: %s from channel: %s", userID, channel))
-
-		conn.Close()
 		hub.mu.Lock()
 		delete(hub.Users, conn)
 		hub.mu.Unlock()
+		conn.Close()
 	}
 
 	logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectUsersByChannel - Disconnected all users from channel: %s", channel))
@@ -128,13 +114,22 @@ func (hub *WebSocketHub) DevicePublishToChannel(referenceId string, deviceID int
 
 	ctx := context.Background()
 	channelName := fmt.Sprintf("device:%d", deviceID)
-	logger.Info(referenceId, fmt.Sprintf("INFO - DevicePublishToChannel - Publishing to channel: %s", channelName))
 
-	if err := redisClient.Publish(ctx, channelName, data).Err(); err != nil {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - DevicePublishToChannel - Failed to publish to Redis: %v", err))
+	var err error
+	for i := 0; i < 3; i++ { // Retry maksimal 3 kali
+		err = redisClient.Publish(ctx, channelName, data).Err()
+		if err == nil {
+			break
+		}
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - Retrying publish to Redis (%d/3)", i+1))
+	}
+
+	if err != nil {
+		logger.Error(referenceId, fmt.Sprintf("ERROR - DevicePublishToChannel - Failed to publish to Redis after retries: %v", err))
 		return err
 	}
 
+	logger.Info(referenceId, fmt.Sprintf("INFO - DevicePublishToChannel - Successfully published to channel: %s", channelName))
 	return nil
 }
 

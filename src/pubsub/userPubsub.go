@@ -11,6 +11,7 @@ import (
 
 func (hub *WebSocketHub) AddUserToWebsocket(referenceId string, conn *websocket.Conn, userId int64, username string, role string, deviceId int64) error {
 	hub.mu.Lock()
+	defer hub.mu.Unlock() // Pastikan mutex dilepas di akhir function
 
 	// Cek apakah userId sudah memiliki koneksi aktif
 	if oldConn, exists := hub.UserConn[userId]; exists {
@@ -20,14 +21,13 @@ func (hub *WebSocketHub) AddUserToWebsocket(referenceId string, conn *websocket.
 		delete(hub.UserConn, userId)
 	}
 
-	deviceConn, exists := hub.DeviceConn[deviceId]
-	if !exists {
+	// Cek apakah device tersedia
+	if _, exists := hub.DeviceConn[deviceId]; !exists {
 		logger.Error(referenceId, fmt.Sprintf("ERROR - AddUserToWebsocket - Device connection not found for device ID: %d", deviceId))
-		hub.mu.Unlock() // Release lock early
 		return fmt.Errorf("device connection not found")
 	}
 
-	logger.Debug(referenceId, fmt.Sprintf("DEBUG - AddUserToWebsocket -  deviceConn found: %v", deviceConn))
+	//logger.Debug(referenceId, fmt.Sprintf("DEBUG - AddUserToWebsocket -  deviceConn found: %v", deviceConn))
 
 	channel := fmt.Sprintf("device:%d", deviceId)
 
@@ -38,16 +38,9 @@ func (hub *WebSocketHub) AddUserToWebsocket(referenceId string, conn *websocket.
 		Conn:              conn,
 		ChannelSubscribed: channel,
 	}
-	logger.Debug(referenceId, fmt.Sprintf("DEBUG - AddUserToWebsocket - User %d added to WebSocket hub", userId))
 
-	// Simpan referensi userId ke koneksi baru
 	hub.UserConn[userId] = conn
-
-	hub.mu.Unlock() // Release lock before subscribing to Redis
-
-	hub.mu.Lock() // Re-acquire lock to update ChannelUsers
 	hub.ChannelUsers[channel] = append(hub.ChannelUsers[channel], conn)
-	hub.mu.Unlock()
 
 	logger.Info(referenceId, fmt.Sprintf("INFO - AddUserToWebsocket - NEW USER Connected - userId: %d, username: %s, role: %s, channel: %s", userId, username, role, channel))
 	logger.Info(referenceId, fmt.Sprintf("INFO - AddUserToWebsocket - Total users connected: %d", len(hub.Users)))
@@ -97,15 +90,25 @@ func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *we
 
 	channelName := fmt.Sprintf("device:%s", deviceID)
 	ctx, cancel := context.WithCancel(context.Background())
+
 	pubSub := hub.redis.Subscribe(ctx, channelName)
+	if pubSub == nil {
+		logger.Error(referenceId, "Failed to subscribe to Redis channel")
+		cancel()
+		return fmt.Errorf("failed to subscribe to Redis channel")
+	}
 
+	hub.mu.Lock()
 	userClient.PubSub = pubSub
-	userClient.ChannelSubscribed = deviceID
+	userClient.ChannelSubscribed = channelName
 	userClient.PubSubCancel = cancel
+	hub.mu.Unlock()
 
+	// Goroutine untuk mendengarkan pesan dari Redis
 	go func() {
 		defer hub.UnsubscribeUserFromChannel(referenceId, userConn)
 		ch := pubSub.Channel()
+
 		for {
 			select {
 			case msg, ok := <-ch:
@@ -119,6 +122,7 @@ func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *we
 					return
 				}
 			case <-ctx.Done():
+				logger.Info(referenceId, fmt.Sprintf("User %s unsubscribed from Redis", userClient.Username))
 				return
 			}
 		}
@@ -141,9 +145,8 @@ func (hub *WebSocketHub) UnsubscribeUserFromChannel(referenceId string, userConn
 	if user.PubSub != nil {
 		user.PubSub.Close()
 		if user.PubSubCancel != nil {
-			user.PubSubCancel()     // Hentikan goroutine
-			user.PubSubCancel = nil // Reset cancel function
-
+			user.PubSubCancel()
+			user.PubSubCancel = nil
 		}
 		user.PubSub = nil
 	}
@@ -153,6 +156,7 @@ func (hub *WebSocketHub) UnsubscribeUserFromChannel(referenceId string, userConn
 	hub.mu.Lock()
 	user.ChannelSubscribed = ""
 	hub.mu.Unlock()
+
 	return nil
 }
 
