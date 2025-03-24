@@ -19,6 +19,8 @@ func Register_Device(referenceId string, conn *sqlx.DB, userID int64, role strin
 		Payload:      make(map[string]any),
 	}
 
+	logger.Info(referenceId, "INFO - Register_Device - param: ", param)
+
 	// Validasi device name
 	deviceName, ok := param["name"].(string)
 	if !ok || deviceName == "" || len(deviceName) > 20 {
@@ -33,6 +35,15 @@ func Register_Device(referenceId string, conn *sqlx.DB, userID int64, role strin
 	if !ok || password == "" {
 		logger.Error(referenceId, "ERROR - Register_Device - Missing password")
 		result.ErrorCode = "400003"
+		result.ErrorMessage = "Invalid request"
+		return result
+	}
+
+	// interval
+	readInterval, ok := param["read_interval"].(float64)
+	if !ok || readInterval == 0 || readInterval <= 0 {
+		logger.Error(referenceId, "ERROR - Regiter_device - Missing read interval")
+		result.ErrorCode = "400004"
 		result.ErrorMessage = "Invalid request"
 		return result
 	}
@@ -106,11 +117,11 @@ func Register_Device(referenceId string, conn *sqlx.DB, userID int64, role strin
 
 	// Insert device
 	queryDevice := `
-		INSERT INTO device.unit (name, st, salt, salted_password, data, attachment)
-		VALUES ($1, $2, $3, $4, $5, $6) 
+		INSERT INTO device.unit (name, st, salt, salted_password, data, attachment, read_interval)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) 
 		RETURNING id;
 	`
-	if err := tx.QueryRow(queryDevice, deviceName, 0, salt, saltedPassword, jsonData, attachmentID).Scan(&newDeviceID); err != nil {
+	if err := tx.QueryRow(queryDevice, deviceName, 0, salt, saltedPassword, jsonData, attachmentID, readInterval).Scan(&newDeviceID); err != nil {
 		logger.Error(referenceId, "ERROR - Register_Device - Failed to insert new device: ", err)
 		return utils.ResultFormat{ErrorCode: "500005", ErrorMessage: "Internal Server Error"}
 	}

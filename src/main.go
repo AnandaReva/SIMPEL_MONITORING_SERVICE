@@ -228,6 +228,7 @@ func main() {
 	paths["/process"] = handlers.Process
 
 	paths["/device-connect"] = handlers.Device_Create_Conn
+	paths["/device-get-data"] = handlers.Device_Get_Data
 	paths["/user-connect"] = handlers.Users_Create_Conn
 
 	// Register endpoints with a multiplexer

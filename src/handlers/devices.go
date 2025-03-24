@@ -275,3 +275,129 @@ Foreign-key constraints:
 	"fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 	"fk_user" FOREIGN KEY (actor) REFERENCES sysuser."user"(id) ON DELETE SET NULL
 */
+
+type DeviceData struct {
+	DeviceID           int64 `db:"id" json:"device_id"`
+	DeviceReadInterval int16 `db:"read_interval" json:"device_read_interval"`
+}
+
+func Device_Get_Data(w http.ResponseWriter, r *http.Request) {
+	// Konteks request ID
+	var ctxKey HTTPContextKey = "requestID"
+	referenceID, ok := r.Context().Value(ctxKey).(string)
+	if !ok {
+		referenceID = "unknown"
+	}
+
+	startTime := time.Now()
+	defer func() {
+		logger.Debug(referenceID, "DEBUG - Device_Get_Data - Execution completed in:", time.Since(startTime))
+	}()
+
+	logger.Debug(referenceID, "DEBUG - Device_Get_Data - raw body: ", r.Body)
+
+	// Ambil body
+	param, err := utils.Request(r)
+	if err != nil {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Failed to parse request body:", err)
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "400000",
+			ErrorMessage: "Invalid Request",
+		})
+		return
+	}
+
+	deviceName, ok := param["name"].(string)
+	if !ok || deviceName == "" {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Missing or invalid 'name'")
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "400001",
+			ErrorMessage: "Invalid Request",
+		})
+		return
+	}
+
+	password, ok := param["password"].(string)
+	if !ok || password == "" {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Missing or invalid 'password'")
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "400002",
+			ErrorMessage: "Invalid Request",
+		})
+		return
+	}
+
+	logStr := fmt.Sprintf("name: %s , password: %s ", deviceName, password)
+	logger.Info(referenceID, "INFO - Device_Get_Data - ", logStr)
+
+	// Dapatkan koneksi database
+	conn, err := db.GetConnection()
+	if err != nil {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Failed to get database connection")
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "500000",
+			ErrorMessage: "Internal Server Error",
+		})
+		return
+	}
+	defer db.ReleaseConnection()
+
+	queryToGetSalt := `SELECT salt FROM device.unit WHERE name = $1`
+
+	var salt string
+	err = conn.QueryRow(queryToGetSalt, deviceName).Scan(&salt)
+	if err != nil {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Failed to get salt:", err)
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "401000",
+			ErrorMessage: "Unauthorized",
+		})
+		return
+	}
+
+	logger.Info(referenceID, "INFO - Device_Get_Data - Salt retrieved:", salt)
+
+	// Generate hashed password menggunakan PBKDF2
+	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, salt, 32, configs.GetPBKDF2Iterations())
+	if errSaltedPass != "" {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Failed to generate salted password:", errSaltedPass)
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "500001",
+			ErrorMessage: "Internal Server Error",
+		})
+		return
+	}
+
+	logger.Info(referenceID, "INFO - Device_Get_Data - Salted password generated:", saltedPassword)
+
+	// Query untuk mendapatkan data perangkat
+	queryTogetDeviceData := `SELECT id, read_interval FROM device.unit WHERE name = $1 AND salted_password = $2`
+
+	var deviceData DeviceData
+	err = conn.QueryRow(queryTogetDeviceData, deviceName, saltedPassword).Scan(
+		&deviceData.DeviceID,
+		&deviceData.DeviceReadInterval,
+	)
+	if err != nil {
+		logger.Error(referenceID, "ERROR - Device_Get_Data - Failed to get device data:", err)
+		utils.Response(w, utils.ResultFormat{
+			ErrorCode:    "401000",
+			ErrorMessage: "Unauthorized",
+		})
+		return
+	}
+
+	logStr = fmt.Sprintf("Device ID: %d , Device Read Interval: %d", deviceData.DeviceID, deviceData.DeviceReadInterval)
+	logger.Debug(referenceID, "DEBUG - Device_Get_Data - Device data retrieved:", logStr)
+
+	// Kirim respons
+	utils.Response(w, utils.ResultFormat{
+		ErrorCode:    "000000",
+		ErrorMessage: "",
+		Payload: map[string]any{
+			"status":        "success",
+			"device_id":     deviceData.DeviceID,
+			"read_interval": deviceData.DeviceReadInterval,
+		},
+	})
+}
