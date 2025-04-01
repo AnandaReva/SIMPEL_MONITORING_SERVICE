@@ -2,10 +2,10 @@ package process
 
 import (
 	"fmt"
-	"monitoring_service/configs"
 	"monitoring_service/crypto"
 	"monitoring_service/logger"
 	"monitoring_service/utils"
+	"os"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -48,26 +48,39 @@ func Register_Device(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
-	// Generate salt
-	salt, err := utils.RandomStringGenerator(16)
-	if err != "" {
-		logger.Error(referenceId, "ERROR - Register_Device - Failed to generate salt: ", err)
+	// get key
+
+	key := os.Getenv("KEY")
+	logger.Debug(referenceId, "DEBUG - Register_Device - key:", key)
+	if key == "" {
+		logger.Error(referenceId, "ERROR - Register_Device - KEY is not set")
 		result.ErrorCode = "500000"
 		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
 	// Generate hashed password menggunakan PBKDF2
-	saltedPassword, errSaltedPass := crypto.GeneratePBKDF2(password, salt, 32, configs.GetPBKDF2Iterations())
-	if errSaltedPass != "" {
-		logger.Error(referenceId, "ERROR - Register_Device - Failed to generate salted password: ", errSaltedPass)
+	chiperPassword, iv, err := crypto.EncryptAES256(password, key)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Register_Device - Failed to generate salted password: ", err)
 		result.ErrorCode = "500001"
 		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
-	logger.Info(referenceId, "INFO - Register_Device - Salt generated:", salt)
-	logger.Info(referenceId, "INFO - Register_Device - Salted password generated:", saltedPassword)
+	/* TEST */
+	/* plainTextPassword, err := crypto.DecryptAES256(chiperPassword, iv, key)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Register_Device - Failed to decrypt salted password: ", err)
+		result.ErrorCode = "500001"
+		result.ErrorMessage = "Internal server error"
+		return result
+	}
+
+	logger.Debug(referenceId, "DEBUG - Register_Device - plainTextPassword:", plainTextPassword) */
+
+	logger.Info(referenceId, "INFO - Register_Device - encrypted password generated:", chiperPassword)
+	logger.Info(referenceId, "INFO - Register_Device - inilization vector generated:", iv)
 
 	// Cek apakah device name sudah ada di database
 	queryCheckDeviceName := `SELECT COUNT(*) FROM device.unit WHERE name = $1;`
@@ -121,7 +134,7 @@ func Register_Device(referenceId string, conn *sqlx.DB, userID int64, role strin
 		VALUES ($1, $2, $3, $4, $5, $6, $7) 
 		RETURNING id;
 	`
-	if err := tx.QueryRow(queryDevice, deviceName, 0, salt, saltedPassword, jsonData, attachmentID, readInterval).Scan(&newDeviceID); err != nil {
+	if err := tx.QueryRow(queryDevice, deviceName, 0, iv, chiperPassword, jsonData, attachmentID, readInterval).Scan(&newDeviceID); err != nil {
 		logger.Error(referenceId, "ERROR - Register_Device - Failed to insert new device: ", err)
 		return utils.ResultFormat{ErrorCode: "500005", ErrorMessage: "Internal Server Error"}
 	}
@@ -129,7 +142,7 @@ func Register_Device(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Insert ke activity log
 	queryActivity := `
 		INSERT INTO device.device_activity (unit_id, actor, activity)
-		VALUES ($1, $2, 'Register device');
+		VALUES ($1, $2, 'Register');
 	`
 	if _, err := tx.Exec(queryActivity, newDeviceID, userID); err != nil {
 		logger.Error(referenceId, "ERROR - Register_Device - Failed to insert activity log: ", err)

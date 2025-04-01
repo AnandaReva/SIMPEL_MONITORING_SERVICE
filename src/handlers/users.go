@@ -128,7 +128,7 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	generatedToken, errHmac := crypto.GenerateHMAC(sessionID+deviceID, sessionHash)
 	logger.Info(referenceId, "generatedToken: ", generatedToken)
 
-	if errHmac != "" {
+	if errHmac != nil {
 		logger.Error(referenceId, "WARN - Users_Create_Conn - error generating HMAC: ", errHmac)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500002",
@@ -239,3 +239,6 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info(referenceId, "INFO - WebSocket connection established for user:", userData.Username)
 }
+
+
+

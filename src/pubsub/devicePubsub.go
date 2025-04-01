@@ -66,41 +66,55 @@ func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *web
 
 	// Jika device memiliki channel, putuskan semua user yang subscribe ke channel itu
 	if channel != "" {
-		hub.DisconnectUsersByChannel(referenceId, channel)
+		hub.DisconnectAllUsersFromDevice(referenceId, device.DeviceID)
 	}
 
 	return nil
 }
 
-func (hub *WebSocketHub) DisconnectUsersByChannel(referenceId, channel string) error {
+// DisconnectAllUsersFromDevice menutup semua koneksi user yang terhubung ke device tertentu
+func (hub *WebSocketHub) DisconnectAllUsersFromDevice(referenceId string, deviceID int64) error {
+	channel := fmt.Sprintf("device:%d", deviceID)
+
 	hub.mu.Lock()
-	conns, exists := hub.ChannelUsers[channel]
+	defer hub.mu.Unlock()
+
+	// Dapatkan semua koneksi user yang subscribe ke channel ini
+	userConns, exists := hub.ChannelUsers[channel]
 	if !exists {
-		hub.mu.Unlock()
-		logger.Warning(referenceId, fmt.Sprintf("WARNING - DisconnectUsersByChannel - No users found for channel: %s", channel))
-		return errors.New("no users found for channel")
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - DisconnectAllUsersFromDevice - No users found for device ID: %d", deviceID))
+		return errors.New("no users found for this device")
 	}
-	delete(hub.ChannelUsers, channel) // Hapus channel dari daftar
-	hub.mu.Unlock()
+	logger.Debug(referenceId, fmt.Sprintf("DEBUG - DisconnectAllUsersFromDevice - Found %d users for device ID: %d", len(userConns), deviceID))
 
-	// Unsubscribe dari Redis di luar blok yang terkunci
-	if hub.redis != nil {
-		pubsub := hub.redis.Subscribe(context.Background(), channel)
-		if err := pubsub.Unsubscribe(context.Background(), channel); err != nil {
-			logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to unsubscribe from Redis: %v", err))
+	// Hapus channel dari mapping
+	delete(hub.ChannelUsers, channel)
+
+	// Tutup semua koneksi user yang terkait
+	for _, conn := range userConns {
+		if user, ok := hub.Users[conn]; ok {
+			// Panggil cancel function jika ada
+			if user.PubSubCancel != nil {
+				user.PubSubCancel()
+			}
+
+			// Tutup PubSub Redis
+			if user.PubSub != nil {
+				_ = user.PubSub.Close()
+			}
+
+			// Hapus dari mapping UserConn
+			delete(hub.UserConn, user.UserID)
+
+			// Hapus dari mapping Users
+			delete(hub.Users, conn)
+
+			// Tutup koneksi WebSocket
+			conn.Close()
 		}
-		_ = pubsub.Close()
 	}
 
-	// Tutup semua koneksi WebSocket user
-	for _, conn := range conns {
-		hub.mu.Lock()
-		delete(hub.Users, conn)
-		hub.mu.Unlock()
-		conn.Close()
-	}
-
-	logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectUsersByChannel - Disconnected all users from channel: %s", channel))
+	logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectAllUsersFromDevice - Disconnected %d users from device ID: %d", len(userConns), deviceID))
 	return nil
 }
 
@@ -152,5 +166,26 @@ func PushDataToBuffer(ctx context.Context, data string, referenceId string) erro
 	}
 
 	logger.Info(referenceId, "INFO - Data successfully pushed to buffer with name : ", redisBufferName)
+	return nil
+}
+
+func (hub *WebSocketHub) SendMessageToDevice(referenceId string, deviceID int64, message string) error {
+	hub.mu.Lock()
+	conn, exists := hub.DeviceConn[deviceID]
+	hub.mu.Unlock()
+
+	if !exists {
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - SendMessageToDevice - Device ID %d is not connected", deviceID))
+		return errors.New("device is not connected")
+	}
+
+	// Kirim data ke perangkat melalui WebSocket
+	err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+	if err != nil {
+		logger.Error(referenceId, fmt.Sprintf("ERROR - SendMessageToDevice - Failed to send data to device %d: %v", deviceID, err))
+		return err
+	}
+
+	logger.Info(referenceId, fmt.Sprintf("INFO - SendMessageToDevice - Successfully sent data to device %d", deviceID))
 	return nil
 }

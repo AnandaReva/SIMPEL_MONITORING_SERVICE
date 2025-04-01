@@ -53,6 +53,18 @@ func initProcessMap() {
 		role:     []string{"system user", "system admin", "system master"},
 	}
 
+	prcsMap["get_device_data"] = prcs{
+		function: process.Get_Device_Data,
+		class:    "user",
+		role:     []string{"system admin", "system master"},
+	}
+
+	prcsMap["update_device_data"] = prcs{
+		function: process.Update_Device_Data,
+		class:    "user",
+		role:     []string{"system admin", "system master"},
+	}
+
 	prcsMap["get_dummy_active_devices"] = prcs{
 		function: process.Get_Dummy_Active_Devices,
 		class:    "user",

@@ -17,6 +17,7 @@ export DBNAME=simpel
 export RDHOST=localhost:6379
 export RDPASS=qwerqwer
 export RDDB=0
+export KEY=f1b2d3c4e5f60798765a4b32c1d2e3f4a5b6c7d8e9f1a2b3c4d5e6f7a8b9c0d1
 
 
 

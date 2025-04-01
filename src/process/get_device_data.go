@@ -1,8 +1,11 @@
 package process
 
 import (
+	"encoding/json"
 	"fmt"
+	"monitoring_service/crypto"
 	"monitoring_service/logger"
+	"os"
 
 	"monitoring_service/utils"
 
@@ -44,6 +47,8 @@ simpel=> \d device.device_activity
  actor    | bigint |           |          |
  activity | text   |           | not null |
  tstamp   | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
+ before   | jsonb  |           |          |
+ after    | jsonb  |           |          |
 Indexes:
     "activity_pkey" PRIMARY KEY, btree (id)
 Foreign-key constraints:
@@ -54,20 +59,28 @@ Foreign-key constraints:
 */
 
 type DeviceData struct {
-	DeviceId     int64  `db:"device_id" json:"device_id"`
-	DeviceName   string `db:"device_name" json:"device_name"`
-	CreateTstamp int64  `db:"create_tstamp" json:"create_tstamp"`
-	LastTstamp   int64  `db:"last_tstamp" json:"last_tstamp"`
-	Attachment   string `db:"attachment" json:"attachment"`
-	ReadInterval int16  `db:"read_interval" json:"read_interval"`
+	DeviceName   string          `db:"name" json:"device_name"`
+	CreateTstamp int64           `db:"create_tstamp" json:"device_create_tstamp"`
+	LastTstamp   int64           `db:"last_tstamp" json:"device_last_tstamp"`
+	ReadInterval int16           `db:"read_interval" json:"device_read_interval"`
+	Data         json.RawMessage `db:"data" json:"device_data"`
+	Attachment   *int64          `db:"attachment"`
+}
+
+type DeviceAttachment struct {
+	AttachmentId   int64  `db:"attachment_id" json:"attachment_id"`
+	AttachmentName string `db:"attachment_name" json:"attachment_name"`
+	AttachmentData string `db:"attachment_data" json:"attachment_data"`
 }
 
 type DeviceActivity struct {
 	ActivityId          int64  `db:"activity_id" json:"activity_id"`
-	ActivityActor       int64  `db:"activity_actor" json:"activity_actor"`
+	ActivityActor       int64  `db:"activity_actor_id" json:"activity_actor_id"`
 	ActorFullName       string `db:"actor_full_name" json:"actor_full_name"`
 	ActivityDescription string `db:"activity_description" json:"activity_description"`
 	ActivityTstamp      int64  `db:"activity_tstamp" json:"activity_tstamp"`
+	ActivityBefore      string `db:"activity_before" json:"activity_before"`
+	ActivityAfter       string `db:"activity_after" json:"activity_after"`
 }
 
 func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
@@ -88,15 +101,47 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
+	// handle password
+	var salt string
+	var saltedPassword string
+
+	query := `SELECT salt, salted_password FROM device.unit WHERE id = $1`
+	if err := conn.QueryRow(query, int64(deviceId)).Scan(&salt, &saltedPassword); err != nil {
+		logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to get device salt and salted_password: ", err)
+		result.ErrorCode = "500000"
+		result.ErrorMessage = "Internal Server Error"
+		return result
+	}
+
+	// get plain text
+	key := os.Getenv("KEY")
+	logger.Debug(referenceId, "DEBUG - Register_Device - key:", key)
+	if key == "" {
+		logger.Error(referenceId, "ERROR - Register_Device - KEY is not set")
+		result.ErrorCode = "500000"
+		result.ErrorMessage = "Internal server error"
+		return result
+	}
+
+	plainTextPassword, err := crypto.DecryptAES256(saltedPassword, salt, key)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Register_Device - Failed to decrypt salted password: ", err)
+		result.ErrorCode = "500001"
+		result.ErrorMessage = "Internal server error"
+		return result
+	}
+
+	logger.Debug(referenceId, "DEBUG - Register_Device - plainTextPassword:", plainTextPassword)
+
 	// Query untuk mengambil data perangkat
 	queryDevice := `
 		SELECT 
-			du.id AS device_id, 
-			du.name AS device_name,
+			du.name,
 			du.create_tstamp, 
 			du.last_tstamp, 
-			du.attachment, 
-			du.read_interval
+			du.read_interval,
+			COALESCE(du.data, '{}'::jsonb) AS data,
+			COALESCE(du.attachment, 0) AS attachment
 		FROM 
 			device.unit du
 		WHERE 
@@ -111,14 +156,41 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
+	// Query untuk mengambil lampiran perangkat
+	queryAttachment := `
+		SELECT
+			sf.id AS attachment_id,
+			sf.name AS attachment_name,
+			sf.data AS attachment_data
+		FROM
+			sysfile.file sf
+		WHERE
+			sf.id = $1;
+	`
+	var deviceAttachment DeviceAttachment
+	if err := conn.Get(&deviceAttachment, queryAttachment, deviceData.Attachment); err != nil {
+		logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device attachment: ", err)
+		result.ErrorCode = "500004"
+		result.ErrorMessage = "Internal Server Error"
+		return result
+	}
+	// Jika lampiran tidak ditemukan, set ke nil
+	if deviceAttachment.AttachmentId == 0 {
+		deviceAttachment.AttachmentId = 0
+		deviceAttachment.AttachmentName = ""
+		deviceAttachment.AttachmentData = ""
+	}
+
 	// Query untuk mengambil aktivitas perangkat dengan full_name dari aktor
 	queryActivities := `
 		SELECT 
 			da.id AS activity_id, 
-			da.actor AS activity_actor, 
+			COALESCE(da.actor, 0) AS activity_actor_id,
 			COALESCE(su.full_name, '') AS actor_full_name,
 			da.activity AS activity_description,
-			da.tstamp AS activity_tstamp
+			da.tstamp AS activity_tstamp,
+			COALESCE(da.before, '{}'::jsonb) AS activity_before,
+			COALESCE(da.after, '{}'::jsonb) AS activity_after
 		FROM 
 			device.device_activity da
 		LEFT JOIN 
@@ -139,15 +211,15 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Format respons
 	result.Payload["status"] = "success"
 	result.Payload["device_data"] = map[string]any{
-		"device_id":         deviceData.DeviceId,
-		"device_name":       deviceData.DeviceName,
-		"create_tstamp":     deviceData.CreateTstamp,
-		"last_tstamp":       deviceData.LastTstamp,
-		"attachment":        deviceData.Attachment,
-		"read_interval":     deviceData.ReadInterval,
-		"device_activities": deviceActivities,
+		"device_name":          deviceData.DeviceName,
+		"device_password":      plainTextPassword,
+		"device_create_tstamp": deviceData.CreateTstamp,
+		"device_last_tstamp":   deviceData.LastTstamp,
+		"device_read_interval": deviceData.ReadInterval,
+		"device_data":          deviceData.Data,
+		"device_attachment":    deviceAttachment,
+		"device_activities":    deviceActivities,
 	}
 
-	logger.Info(referenceId, fmt.Sprintf("INFO - Get_Device_Data - Found device_id %d with %d activities", deviceData.DeviceId, len(deviceActivities)))
 	return result
 }

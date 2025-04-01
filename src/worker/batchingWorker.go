@@ -152,112 +152,6 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 	}
 }
 
-/* func fetchRedisBuffer() ([]DeviceData, error) {
-	ctx := context.Background()
-	redisClient := pubsub.GetRedisClient()
-	if redisClient == nil {
-		return nil, fmt.Errorf("redis client is not initialized")
-	}
-
-	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
-	}
-
-	var parsedData []DeviceData
-	for _, item := range data {
-		var deviceData struct {
-			Device_Id    int64   `json:"Device_Id"`
-			Tstamp       string  `json:"Tstamp"`
-			Voltage      float64 `json:"Voltage"`
-			Current      float64 `json:"Current"`
-			Power        float64 `json:"Power"`
-			Energy       float64 `json:"Energy"`
-			Frequency    float64 `json:"Frequency"`
-			Power_factor float64 `json:"Power_factor"`
-		}
-
-		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v - DATA: %s", err, item))
-			continue
-		}
-
-		// Konversi string timestamp ke time.Time
-		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
-		if err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
-			continue
-		}
-
-		parsedData = append(parsedData, DeviceData{
-			Device_Id:    deviceData.Device_Id,
-			Tstamp:       parsedTime.UTC(),
-			Voltage:      deviceData.Voltage,
-			Current:      deviceData.Current,
-			Power:        deviceData.Power,
-			Energy:       deviceData.Energy,
-			Frequency:    deviceData.Frequency,
-			Power_factor: deviceData.Power_factor,
-		})
-	}
-
-	return parsedData, nil
-} */
-
-/* func fetchRedisBuffer() ([]DeviceData, error) {
-	ctx := context.Background()
-	redisClient := pubsub.GetRedisClient()
-	if redisClient == nil {
-		return nil, fmt.Errorf("redis client is not initialized")
-	}
-
-	data, err := redisClient.LRange(ctx, "buffer:device_data", 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve data from Redis: %w", err)
-	}
-
-	var parsedData []DeviceData
-	for _, item := range data {
-		var deviceData struct {
-			Device_Id    int64   `json:"Device_Id"`
-			Tstamp       string  `json:"Tstamp"`
-			Voltage      float64 `json:"Voltage"`
-			Current      float64 `json:"Current"`
-			Power        float64 `json:"Power"`
-			Energy       float64 `json:"Energy"`
-			Frequency    float64 `json:"Frequency"`
-			Power_factor float64 `json:"Power_factor"`
-		}
-
-		if err := json.Unmarshal([]byte(item), &deviceData); err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid JSON format: %v - DATA: %s", err, item))
-			redisClient.LRem(ctx, "buffer:device_data", 1, item)
-			continue
-		}
-
-		parsedTime, err := time.Parse(time.RFC3339, deviceData.Tstamp)
-		if err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
-			redisClient.LRem(ctx, "buffer:device_data", 1, item)
-			continue
-		}
-
-		parsedData = append(parsedData, DeviceData{
-			Device_Id:    deviceData.Device_Id,
-			Tstamp:       parsedTime.UTC(),
-			Voltage:      deviceData.Voltage,
-			Current:      deviceData.Current,
-			Power:        deviceData.Power,
-			Energy:       deviceData.Energy,
-			Frequency:    deviceData.Frequency,
-			Power_factor: deviceData.Power_factor,
-		})
-	}
-
-	return parsedData, nil
-}
-*/
-
 func fetchRedisBuffer() ([]DeviceData, error) {
 	ctx := context.Background()
 	redisClient := pubsub.GetRedisClient()
@@ -275,14 +169,14 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 
 	for _, item := range data {
 		var deviceData struct {
-			Device_Id    int64   `json:"Device_Id"`
-			Tstamp       string  `json:"Tstamp"`
-			Voltage      float64 `json:"Voltage"`
-			Current      float64 `json:"Current"`
-			Power        float64 `json:"Power"`
-			Energy       float64 `json:"Energy"`
-			Frequency    float64 `json:"Frequency"`
-			Power_factor float64 `json:"Power_factor"`
+			Device_Id    int64   `json:"device_id"`
+			Tstamp       string  `json:"tstamp"`
+			Voltage      float64 `json:"voltage"`
+			Current      float64 `json:"current"`
+			Power        float64 `json:"power"`
+			Energy       float64 `json:"energy"`
+			Frequency    float64 `json:"frequency"`
+			Power_factor float64 `json:"power_factor"`
 		}
 
 		// Coba decode JSON
@@ -299,7 +193,6 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 			invalidItems = append(invalidItems, item)
 			continue
 		}
-		
 
 		// Data valid, tambahkan ke parsedData
 		parsedData = append(parsedData, DeviceData{
@@ -382,7 +275,7 @@ func saveDataToDB(data []DeviceData) error {
 	}
 
 	stmt, err := tx.Prepare(`INSERT INTO device.data (unit_id, tstamp, voltage, current, power, energy, frequency, power_factor) 
-							  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
+							VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to prepare statement: %w", err)

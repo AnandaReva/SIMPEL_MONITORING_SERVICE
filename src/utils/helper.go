@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"monitoring_service/logger"
@@ -120,7 +121,24 @@ func MapToJSON(data map[string]any) (string, error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		logger.Error("ERROR - MapToJSON - Failed converting map to JSON: ", err)
-		return "", err // Tidak mengembalikan "{}" agar lebih jelas jika terjadi error
+		return "", err 
 	}
 	return string(jsonData), nil
+}
+
+// JSONStringToMap converts a JSON string to a map.
+// JSONStringToMap converts a JSON string to a map.
+func JSONStringToMap(jsonStr string) (map[string]any, error) {
+	if jsonStr == "" {
+		return nil, errors.New("input JSON string is empty")
+	}
+
+	var result map[string]any
+	err := json.Unmarshal([]byte(jsonStr), &result)
+	if err != nil {
+		logger.Error("ERROR - JSONStringToMap - Failed parsing JSON: ", err)
+		return nil, err
+	}
+
+	return result, nil
 }
