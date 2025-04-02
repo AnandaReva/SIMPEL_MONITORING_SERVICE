@@ -156,8 +156,12 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
-	// Query untuk mengambil lampiran perangkat
-	queryAttachment := `
+	var deviceAttachment DeviceAttachment
+
+	if deviceData.Attachment != nil && *deviceData.Attachment != 0 {
+
+		// Query untuk mengambil lampiran perangkat
+		queryAttachment := `
 		SELECT
 			sf.id AS attachment_id,
 			sf.name AS attachment_name,
@@ -166,19 +170,20 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 			sysfile.file sf
 		WHERE
 			sf.id = $1;
-	`
-	var deviceAttachment DeviceAttachment
-	if err := conn.Get(&deviceAttachment, queryAttachment, deviceData.Attachment); err != nil {
-		logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device attachment: ", err)
-		result.ErrorCode = "500004"
-		result.ErrorMessage = "Internal Server Error"
-		return result
-	}
-	// Jika lampiran tidak ditemukan, set ke nil
-	if deviceAttachment.AttachmentId == 0 {
-		deviceAttachment.AttachmentId = 0
-		deviceAttachment.AttachmentName = ""
-		deviceAttachment.AttachmentData = ""
+		`
+		if err := conn.Get(&deviceAttachment, queryAttachment, deviceData.Attachment); err != nil {
+			logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device attachment: ", err)
+			result.ErrorCode = "500004"
+			result.ErrorMessage = "Internal Server Error"
+			return result
+		}
+		// Jika lampiran tidak ditemukan, set ke nil
+		if deviceAttachment.AttachmentId == 0 {
+			deviceAttachment.AttachmentId = 0
+			deviceAttachment.AttachmentName = ""
+			deviceAttachment.AttachmentData = ""
+		}
+
 	}
 
 	// Query untuk mengambil aktivitas perangkat dengan full_name dari aktor

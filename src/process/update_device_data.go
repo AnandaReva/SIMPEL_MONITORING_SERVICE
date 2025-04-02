@@ -3,9 +3,11 @@ package process
 import (
 	"database/sql"
 	"fmt"
+	"monitoring_service/crypto"
 	"monitoring_service/logger"
 	"monitoring_service/pubsub"
 	"monitoring_service/utils"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ dont remove comments
   "change_fields": {
     "read_interval": 1,
     "name": "new device name",
+	"password" : ""new device password,
     "data": {
       "update": {
         "updated_field1": "value1"
@@ -164,6 +167,40 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		result.ErrorCode = "400003"
 		result.ErrorMessage = "Invalid request"
 		return result
+	}
+
+	// check if password exist in change_fields
+
+	newDevicePassword, ok := changeFields["password"].(string)
+	if !ok || newDevicePassword != "" || len(newDevicePassword) <= 0 {
+
+		key := os.Getenv("KEY")
+		logger.Debug(referenceId, "DEBUG - Update_Device_Data - key:", key)
+		if key == "" {
+			logger.Error(referenceId, "ERROR - Update_Device_Data - KEY is not set")
+			result.ErrorCode = "500000"
+			result.ErrorMessage = "Internal server error"
+			return result
+		}
+
+		// Generate hashed password menggunakan PBKDF2
+		chiperPassword, iv, err := crypto.EncryptAES256(newDevicePassword, key)
+		if err != nil {
+			logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to generate salted password: ", err)
+			result.ErrorCode = "500001"
+			result.ErrorMessage = "Internal server error"
+			return result
+		}
+
+		// remove password field and value from change_fields
+		delete(changeFields, "password")
+		// add salt (iv) and salted_password (chiper) in  change_fields
+
+		changeFields["salt"] = iv
+		changeFields["salted_password"] = chiperPassword
+
+		logger.Debug(referenceId, "DEBUG - Update_Device_Data - change_fields after handle password: ", changeFields)
+
 	}
 
 	// Begin transaction
