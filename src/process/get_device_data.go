@@ -59,6 +59,7 @@ Foreign-key constraints:
 */
 
 type DeviceData struct {
+	DeviceId     int64           `db:"id" json:"device_id"`
 	DeviceName   string          `db:"name" json:"device_name"`
 	CreateTstamp int64           `db:"create_tstamp" json:"device_create_tstamp"`
 	LastTstamp   int64           `db:"last_tstamp" json:"device_last_tstamp"`
@@ -136,6 +137,7 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Query untuk mengambil data perangkat
 	queryDevice := `
 		SELECT 
+			du.id,
 			du.name,
 			du.create_tstamp, 
 			du.last_tstamp, 
@@ -216,6 +218,7 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Format respons
 	result.Payload["status"] = "success"
 	result.Payload["device_data"] = map[string]any{
+		"device_id":            deviceData.DeviceId,
 		"device_name":          deviceData.DeviceName,
 		"device_password":      plainTextPassword,
 		"device_create_tstamp": deviceData.CreateTstamp,

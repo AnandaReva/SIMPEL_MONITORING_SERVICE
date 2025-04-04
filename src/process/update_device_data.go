@@ -36,10 +36,7 @@ dont remove comments
     } ,
 	 "attachment": {
 	 	"attachemnt_id": 1,
-		 "attachment_change_fields" : {
-				 "attachemnt_name": "new name",
-				 "attachment_data": "new data",
-		}
+		"attachment_data": "new data",
 	 }
   }
 }
@@ -159,9 +156,10 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 	}
 
 	// Check if device exists
+	var deviceName string
 	var deviceSt int8
-	queryCheck := `SELECT st FROM device.unit WHERE id = $1;`
-	errCheck := conn.Get(&deviceSt, queryCheck, deviceIdInt)
+	queryCheck := `SELECT name, st FROM device.unit WHERE id = $1;`
+	errCheck := conn.QueryRow(queryCheck, deviceIdInt).Scan(&deviceName, &deviceSt)
 	if errCheck != nil {
 		logger.Error(referenceId, "ERROR - Update_Device_Data - Device ID not found:", deviceIdInt)
 		result.ErrorCode = "400003"
@@ -223,13 +221,65 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		}
 	}
 
-	// Update attachment if provided
-	if attachment, ok := changeFields["attachment"].(map[string]any); ok && len(attachment) > 0 {
-		success := updateDeviceAttachment(referenceId, tx, attachment)
-		if !success {
-			result.ErrorCode = "500002"
-			result.ErrorMessage = "Failed to update device attachment"
-			return result
+	/* exp format update:
+	"attachment": {
+	 	"attachemnt_id": 1,
+		"attachment_data": "new data",
+	 } do: update sysfile.file set data = new data, name = new name, tstamp = now() where id = 1
+	  "attachment": {
+	 	"attachemnt_id": 1,
+	 } do: delete from sysfile.file where id = 1
+
+
+
+	*/
+	// Proses attachment
+	// Proses attachment
+	if rawAttachment, ok := param["attachment"].(map[string]interface{}); ok {
+		// Ambil attachment_id dari input
+		rawAttachmentId, hasId := rawAttachment["attachment_id"]
+		rawAttachmentData, hasData := rawAttachment["attachment_data"]
+
+		if hasId {
+			// Konversi ID ke int64
+			attachmentIdFloat, ok := rawAttachmentId.(float64)
+			if !ok {
+				logger.Error(referenceId, "ERROR - attachment_id is not a valid number")
+				result.ErrorCode = "400001"
+				result.ErrorMessage = "Invalid attachment_id"
+				return result
+			}
+			attachmentId := int64(attachmentIdFloat)
+
+			if hasData {
+				// UPDATE attachment
+				attachmentData, ok := rawAttachmentData.(string)
+				if !ok {
+					logger.Error(referenceId, "ERROR - attachment_data is not a string")
+					result.ErrorCode = "400002"
+					result.ErrorMessage = "Invalid attachment_data"
+					return result
+				}
+
+				imageName := fmt.Sprintf("%s_%s", deviceName, time.Now().Format("20060102150405"))
+				success := updateDeviceAttachment(referenceId, tx, sql.NullInt64{Int64: attachmentId, Valid: true}, attachmentData, imageName, deviceIdInt)
+				if !success {
+					result.ErrorCode = "500003"
+					result.ErrorMessage = "Failed to update device attachment"
+					return result
+				}
+			} else {
+				// DELETE attachment
+				deleteQuery := `DELETE FROM sysfile.file WHERE id = $1;`
+				_, err := tx.Exec(deleteQuery, attachmentId)
+				if err != nil {
+					logger.Error(referenceId, "ERROR - Failed to delete attachment:", err)
+					result.ErrorCode = "500004"
+					result.ErrorMessage = "Failed to delete attachment"
+					return result
+				}
+				logger.Info(referenceId, "INFO - Attachment deleted successfully")
+			}
 		}
 	}
 
@@ -321,40 +371,44 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 	return true
 }
 
+/* impel=> \d sysfile.file
+                                        Table "sysfile.file"
+ Column |          Type          | Collation | Nullable |                  Default
+--------+------------------------+-----------+----------+-------------------------------------------
+ id     | bigint                 |           | not null | nextval('sysfile.image_id_seq'::regclass)
+ tstamp | bigint                 |           | not null | EXTRACT(epoch FROM now())::bigint
+ data   | text                   |           | not null |
+ name   | character varying(255) |           | not null |
+Indexes:
+    "image_pkey" PRIMARY KEY, btree (id)
+Referenced by:
+    TABLE "device.unit" CONSTRAINT "fk_attachment" FOREIGN KEY (attachment) REFERENCES sysfile.file(id) ON DELETE SET NULL
+*/
+
 // updateDeviceAttachment updates the attachment information for a device
-func updateDeviceAttachment(referenceId string, tx *sqlx.Tx, attachment map[string]any) bool {
-	attachmentID, ok := attachment["attachment_id"].(float64)
-	if !ok || attachmentID <= 0 {
-		logger.Error(referenceId, "ERROR - UpdateDeviceAttachment - Missing or Invalid attachment_id")
+// updateDeviceAttachment updates the attachment information for a device
+// updateDeviceAttachment updates the attachment information for a device
+func updateDeviceAttachment(referenceId string, tx *sqlx.Tx, attachmentID sql.NullInt64, attachmentData string, attachmentName string, deviceId int64) bool {
+	logger.Debug(referenceId, "DEBUG - UpdateDeviceAttachment - attachmentData:", attachmentData)
+	logger.Debug(referenceId, "DEBUG - UpdateDeviceAttachment - attachmentName:", attachmentName)
+
+	if !attachmentID.Valid {
+		logger.Error(referenceId, "ERROR - No attachment ID found for device:", deviceId)
 		return false
 	}
 
-	changeFields, ok := attachment["attachment_change_fields"].(map[string]any)
-	if !ok {
-		logger.Error(referenceId, "ERROR - UpdateDeviceAttachment - Invalid attachment_change_fields format")
-		return false
-	}
+	updateQuery := `
+		UPDATE sysfile.file 
+		SET data = $1, name = $2, tstamp = EXTRACT(epoch FROM now())::bigint 
+		WHERE id = $3;
+	`
 
-	// Build update query
-	updateFields := []string{}
-	updateValues := []any{}
-
-	for key, value := range changeFields {
-		updateFields = append(updateFields, fmt.Sprintf("%s = ?", key))
-		updateValues = append(updateValues, value)
-	}
-	updateFields = append(updateFields, "tstamp = ?")
-	updateValues = append(updateValues, time.Now().Unix())
-
-	updateQuery := fmt.Sprintf("UPDATE sysfile.file SET %s WHERE id = ?", strings.Join(updateFields, ", "))
-	updateValues = append(updateValues, attachmentID)
-
-	_, err := tx.Exec(updateQuery, updateValues...)
+	_, err := tx.Exec(updateQuery, attachmentData, attachmentName, attachmentID.Int64)
 	if err != nil {
-		logger.Error(referenceId, "ERROR - UpdateDeviceAttachment - Failed to execute update query:", err)
+		logger.Error(referenceId, "ERROR - Failed to update attachment:", err)
 		return false
 	}
 
-	logger.Info(referenceId, "INFO - UpdateDeviceAttachment - Successfully updated device attachment")
+	logger.Info(referenceId, "INFO - Successfully updated attachment for device:", deviceId)
 	return true
 }
