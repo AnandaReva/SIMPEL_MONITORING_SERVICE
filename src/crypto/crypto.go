@@ -47,6 +47,8 @@ func GeneratePBKDF2(text string, salt string, length int, iterations int) (strin
 // Fungsi untuk mengenkripsi data menggunakan AES dengan mode CBC
 // Fungsi untuk mengenkripsi data menggunakan AES-256 CBC dengan output dalam hex
 func EncryptAES256(plainText string, keyHex string) (string, string, error) {
+	logger.Debug("EncryptAES256", "DEBUG - EncryptAES256 - Text(message):", plainText)
+	logger.Debug("EncryptAES256", "DEBUG - EncryptAES256 - Key:", keyHex)
 	// Decode key dari hex ke byte slice
 	keyBytes, err := hex.DecodeString(keyHex)
 	if err != nil {
@@ -94,6 +96,9 @@ func EncryptAES256(plainText string, keyHex string) (string, string, error) {
 
 // Fungsi untuk mendekripsi data menggunakan AES-256 CBC dengan input dalam hex
 func DecryptAES256(cipherTextHex string, ivHex string, keyHex string) (string, error) {
+	logger.Debug("DecryptAES256", "DEBUG - DecryptAES256 - cipherTextHex:", cipherTextHex)
+	logger.Debug("DecryptAES256", "DEBUG - DecryptAES256 - ivHex:", ivHex)
+	logger.Debug("DecryptAES256", "DEBUG - DecryptAES256 - keyHex:", keyHex)
 	// Decode key dari hex ke byte slice
 	keyBytes, err := hex.DecodeString(keyHex)
 	if err != nil {

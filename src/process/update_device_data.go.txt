@@ -2,7 +2,6 @@ package process
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"monitoring_service/crypto"
 	"monitoring_service/logger"
@@ -170,6 +169,37 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		return result
 	}
 
+	// check if password exist in change_fields
+
+	if newDevicePassword, ok := changeFields["password"].(string); ok && newDevicePassword != "" {
+		// Hanya proses password jika field "password" ada dan tidak kosong
+		key := os.Getenv("KEY")
+		logger.Debug(referenceId, "DEBUG - Update_Device_Data - key:", key)
+		if key == "" {
+			logger.Error(referenceId, "ERROR - Update_Device_Data - KEY is not set")
+			result.ErrorCode = "500000"
+			result.ErrorMessage = "Internal server error"
+			return result
+		}
+
+		// Generate hashed password menggunakan PBKDF2
+		chiperPassword, iv, err := crypto.EncryptAES256(newDevicePassword, key)
+		if err != nil {
+			logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to generate salted password: ", err)
+			result.ErrorCode = "500001"
+			result.ErrorMessage = "Internal server error"
+			return result
+		}
+
+		// remove password field and value from change_fields
+		delete(changeFields, "password")
+		// add salt (iv) and salted_password (chiper) in change_fields
+		changeFields["salt"] = iv
+		changeFields["salted_password"] = chiperPassword
+
+		logger.Debug(referenceId, "DEBUG - Update_Device_Data - change_fields after handle password: ", changeFields)
+	}
+
 	// Begin transaction
 	tx, err := conn.Beginx()
 	if err != nil {
@@ -180,91 +210,38 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 	}
 	defer tx.Rollback()
 
-	// Inisialisasi beforeData dan afterData sebagai variabel lokal
-	beforeData := make(map[string]any)
-	afterData := make(map[string]any)
-
-	// Tambah last_tstamp
-	changeFields["last_tstamp"] = time.Now().Unix()
-
-	// check if password exist in change_fields
-
-	if newDevicePassword, ok := changeFields["password"].(string); ok && newDevicePassword != "" {
-		// Hanya proses password jika field "password" ada dan tidak kosong
-		key := os.Getenv("KEY")
-		logger.Debug(referenceId, "DEBUG - Update_Device_Data - key:", key)
-
-		if key == "" {
-			logger.Error(referenceId, "ERROR - Update_Device_Data - KEY is not set")
-			result.ErrorCode = "500000"
-			result.ErrorMessage = "Internal server error"
-			return result
-		}
-
-		afterData["password"] = newDevicePassword
-
-		// Encrypt password baru
-		chiperPassword, iv, err := crypto.EncryptAES256(newDevicePassword, key)
-		if err != nil {
-			logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to encrypt password:", err)
-			result.ErrorCode = "500001"
-			result.ErrorMessage = "Internal server error"
-			return result
-		}
-
-		// Hapus field "password" dari perubahan, ganti dengan salt dan salted_password
-		delete(changeFields, "password")
-		changeFields["salt"] = iv
-		changeFields["salted_password"] = chiperPassword
-
-		// Ambil data password lama
-		var oldSalt sql.NullString
-		var oldSaltedPassword sql.NullString
-
-		querySelect := `SELECT salt, salted_password FROM device.unit WHERE id = $1;`
-		err = tx.QueryRow(querySelect, deviceIdInt).Scan(&oldSalt, &oldSaltedPassword)
-		if err != nil {
-			logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to fetch original device data:", err)
-			result.ErrorCode = "500002"
-			result.ErrorMessage = "Internal server error"
-			return result
-		}
-
-		// Decrypt password lama jika valid
-		if oldSalt.Valid && oldSaltedPassword.Valid {
-			oldPlainPassword, err := crypto.DecryptAES256(oldSaltedPassword.String, oldSalt.String, key)
-			if err != nil {
-				logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to decrypt old password:", err)
-				result.ErrorCode = "500003"
-				result.ErrorMessage = "Internal server error"
-				return result
-			}
-			beforeData["password"] = oldPlainPassword
-		} else {
-			logger.Warning(referenceId, "WARN - Update_Device_Data - Old password data is not valid")
-			beforeData["password"] = nil
-		}
-
-		// Simpan password baru dalam bentuk plain text ke afterData
-		afterData["password"] = newDevicePassword
-
-		logger.Debug(referenceId, "DEBUG - Update_Device_Data - changeFields after password handled:", changeFields)
-	}
-	/////////////  HANDLE UDPATE DATA FIELD ///////////
-
 	// Update field data
 	if dataField, ok := changeFields["data"].(map[string]any); ok && len(dataField) > 0 {
-		// Pass beforeData dan afterData sebagai parameter
-		success := updateDeviceDataField(referenceId, tx, deviceIdInt, dataField, beforeData, afterData)
+		success := updateDeviceDataField(referenceId, tx, deviceIdInt, dataField)
 		if !success {
 			result.ErrorCode = "500001"
 			result.ErrorMessage = "Failed to update device data field"
 			return result
 		}
 	}
-	/////////////  HANDLE UDPATE ATTACHEMENT FIELD ///////////
 
-	/* if rawAttachment, ok := changeFields["attachment"].(map[string]any); ok {
+	/* exp format update:
+		 changeFields.attachment = {
+	    insert: {
+	        attachment_id: originalDeviceData.device_attachment_id,
+	        attachment_data: newDeviceImageBase64.value
+	    }
+	} atau
+	changeFields.attachment = {
+	    update: {
+	        attachment_id: originalDeviceData.device_attachment_id,
+	        attachment_data: newDeviceImageBase64.value
+	    }
+	} atau
+	changeFields.attachment = {
+	    delete: {
+	        attachment_id: originalDeviceData.device_attachment_id
+	    }
+	}
+	*/
+	// Proses attachment
+
+	if rawAttachment, ok := changeFields["attachment"].(map[string]any); ok {
 		logger.Debug(referenceId, "DEBUG - Update_Device_Data - rawAttachment:", rawAttachment)
 		if insertData, ok := rawAttachment["insert"].(map[string]any); ok {
 			logger.Debug(referenceId, "DEBUG - Update_Device_Data - attachment.insert:", insertData)
@@ -347,7 +324,7 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 
 			imageName := fmt.Sprintf("%s_%s", deviceName, time.Now().Format("20060102150405"))
 
-			success := handleUpdateDeviceAttachment(referenceId, tx, sql.NullInt64{Int64: int64(attachmentIdFloat), Valid: true}, attachmentData, imageName, deviceIdInt, beforeData, afterData)
+			success := updateDeviceAttachment(referenceId, tx, sql.NullInt64{Int64: int64(attachmentIdFloat), Valid: true}, attachmentData, imageName, deviceIdInt)
 			if !success {
 				result.ErrorCode = "500013"
 				result.ErrorMessage = "Failed to update attachment"
@@ -386,84 +363,34 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		} else {
 			logger.Info(referenceId, "INFO - No attachment changes detected")
 		}
-	} */
-
-	// Main function usage
-	if rawAttachment, ok := changeFields["attachment"].(map[string]any); ok {
-		success, err := handleUpdateDeviceAttachment(referenceId, tx, rawAttachment, deviceIdInt, deviceName, beforeData, afterData)
-		if !success {
-			logger.Info(referenceId, "INFO - Error wijle deleting attachement")
-			result.ErrorCode = "500013"
-			result.ErrorMessage = err.Error()
-			return result
-		}
-		logger.Info(referenceId, "INFO - Attachment deleted successfully")
 	}
 
 	// Build update query
 	updateFields := []string{}
 	updateValues := []any{}
-	fieldNames := []string{}
-	paramIndex := 1
 
 	for key, value := range changeFields {
-		if key != "data" && key != "attachment" && key != "salt" && key != "salted_password" && key != "last_tstamp" {
-			updateFields = append(updateFields, fmt.Sprintf("%s = $%d", key, paramIndex))
+		if key != "data" && key != "attachment" { // Skip "data" and "attachment" since it's handled separately
+			updateFields = append(updateFields, fmt.Sprintf("%s = ?", key))
 			updateValues = append(updateValues, value)
-			fieldNames = append(fieldNames, key) // hanya yang ini dimasukkan ke before/after log
-			paramIndex++
-		} else if key == "salt" || key == "salted_password" || key == "last_tstamp" {
-			updateFields = append(updateFields, fmt.Sprintf("%s = $%d", key, paramIndex))
-			updateValues = append(updateValues, value)
-			paramIndex++
 		}
 	}
 
-	logger.Debug(referenceId, " - Update_Device_Data - fieldNames: ", fieldNames)
+	updateFields = append(updateFields, "last_tstamp = ?")
+	updateValues = append(updateValues, time.Now().Unix())
 
-	// Ambil beforeData
-	if len(fieldNames) > 0 {
-		fieldList := strings.Join(fieldNames, ", ")
-		queryToGetBeforeData := fmt.Sprintf(`SELECT %s FROM device.unit WHERE id = $1`, fieldList)
-
-		row := make(map[string]any)
-		err := tx.QueryRowx(queryToGetBeforeData, deviceId).MapScan(row)
-		if err != nil {
-			logger.Error(referenceId, "ERROR - Failed to fetch beforeData for updated fields:", err)
-			result.ErrorCode = "500004"
-			result.ErrorMessage = "Internal server error"
-			return result
-		}
-
-		// === Simpan log before ===
-		for _, key := range fieldNames {
-			if val, exists := row[key]; exists {
-				beforeData[key] = val
-			}
-		}
-
-		// === Simpan log after ===
-		for _, key := range fieldNames {
-			if val, exists := changeFields[key]; exists {
-				afterData[key] = val
-
-			}
-		}
-	}
-
-	// Tambahkan last_tstamp
-	// updateFields = append(updateFields, fmt.Sprintf("last_tstamp = $%d", paramIndex))
-	// updateValues = append(updateValues, time.Now().Unix())
-	// paramIndex++
-
-	// Tambahkan WHERE id
-	query := fmt.Sprintf("UPDATE device.unit SET %s WHERE id = $%d", strings.Join(updateFields, ", "), paramIndex)
 	updateValues = append(updateValues, deviceIdInt)
 
-	logger.Debug(referenceId, "Update_Device_Data - final update query: ", query)
-	logger.Debug(referenceId, "Update_Device_Data - final updateValues: ", updateValues)
+	// Ganti `?` dengan `$1`, `$2`, ..., sesuai jumlah parameter
+	placeholders := make([]string, len(updateFields))
+	for i := range updateFields {
+		updateFields[i] = strings.Split(updateFields[i], " = ")[0] + fmt.Sprintf(" = $%d", i+1)
+		placeholders[i] = updateFields[i]
+	}
+	query := fmt.Sprintf("UPDATE device.unit SET %s WHERE id = $%d", strings.Join(updateFields, ", "), len(updateValues))
 
 	_, err = tx.Exec(query, updateValues...)
+
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to execute update query:", err)
 		result.ErrorCode = "500003"
@@ -471,44 +398,14 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		return result
 	}
 
+
 	//////////////////////// INSERT ACTIVITY LOG ////////////////////////
 
-	// INSERT ACTIVITY LOG
-	queryToInsertActivity := `
-	INSERT INTO device.device_activity (
-		unit_id, actor, activity, before, after
-		) VALUES ($1, $2, $3, $4, $5 )`
 
-	beforeJson, err := json.Marshal(beforeData)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - Failed to marshal beforeData:", err)
-		result.ErrorCode = "500004"
-		result.ErrorMessage = "Internal server error"
-		return result
-	}
+	
 
-	afterJson, err := json.Marshal(afterData)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - Failed to marshal afterData:", err)
-		result.ErrorCode = "500004"
-		result.ErrorMessage = "Internal server error"
-		return result
-	}
 
-	_, err = tx.Exec(queryToInsertActivity,
-		deviceIdInt, // unit_id
-		userID,      // actor, pastikan kamu punya nilai ini
-		"Update",    // activity
-		string(beforeJson),
-		string(afterJson),
-	)
 
-	if err != nil {
-		logger.Error(referenceId, "ERROR - Failed to insert activity log:", err)
-		result.ErrorCode = "500005"
-		result.ErrorMessage = "Internal server error"
-		return result
-	}
 
 	// Commit transaction
 	err = tx.Commit()
@@ -525,48 +422,17 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 }
 
 // updateDeviceDataField updates the data field of the device
-func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, dataField map[string]any,
-	beforeData, afterData map[string]any) bool {
-
+func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, dataField map[string]any) bool {
 	var err error
 
-	// Ambil data eksisting sebelum perubahan
-	var existingDataRaw sql.NullString
-	querySelect := `SELECT data FROM device.unit WHERE id = $1;`
-	err = tx.Get(&existingDataRaw, querySelect, deviceId)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to fetch current data:", err)
-		return false
-	}
-
-	currentData := make(map[string]any)
-	if existingDataRaw.Valid {
-		currentData, err = utils.JSONStringToMap(existingDataRaw.String)
-		if err != nil {
-			logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to parse JSON:", err)
-			return false
-		}
-	}
-
-	// Siapkan before/after snapshot
-	originalBefore := make(map[string]any)
-	updatedAfter := maps.Clone(currentData)
-
-	// Step 1: Handle delete fields
+	// === Step 1: Handle delete fields (langsung via SQL jsonb - key) ===
 	if deleteData, ok := dataField["delete"].(map[string]any); ok && len(deleteData) > 0 {
-		for key := range deleteData {
-			// Simpan value sebelum dihapus
-			if val, exists := currentData[key]; exists {
-				originalBefore[key] = val
-				delete(updatedAfter, key)
-			}
-		}
-
-		// Hapus dari database
+		// Siapkan ekspresi jsonb - 'key1' - 'key2' ...
 		expr := ""
 		for key := range deleteData {
 			expr += " - '" + key + "'"
 		}
+
 		queryDelete := fmt.Sprintf(`UPDATE device.unit SET data = data%s WHERE id = $1;`, expr)
 		_, err = tx.Exec(queryDelete, deviceId)
 		if err != nil {
@@ -575,27 +441,35 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 		}
 	}
 
-	// Step 2: Handle update fields
+	// === Step 2: Fetch current data from DB after delete ===
+	var existingData sql.NullString
+	querySelect := `SELECT data FROM device.unit WHERE id = $1;`
+	err = tx.Get(&existingData, querySelect, deviceId)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to fetch current data:", err)
+		return false
+	}
+
+	currentData := make(map[string]any)
+	if existingData.Valid {
+		currentData, err = utils.JSONStringToMap(existingData.String)
+		if err != nil {
+			logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to parse JSON:", err)
+			return false
+		}
+	}
+
+	// === Step 3: Merge update and insert fields into currentData ===
 	if updateData, ok := dataField["update"].(map[string]any); ok {
-		for key, newVal := range updateData {
-			if oldVal, exists := currentData[key]; exists && oldVal != newVal {
-				originalBefore[key] = oldVal
-				updatedAfter[key] = newVal
-			}
-		}
+		maps.Copy(currentData, updateData)
 	}
 
-	// Step 3: Handle insert fields
 	if insertData, ok := dataField["insert"].(map[string]any); ok {
-		for key, newVal := range insertData {
-			if _, exists := currentData[key]; !exists {
-				updatedAfter[key] = newVal
-			}
-		}
+		maps.Copy(currentData, insertData)
 	}
 
-	// Step 4: Simpan hasil akhir ke database
-	updatedJSON, err := utils.MapToJSON(updatedAfter)
+	// === Step 4: Save updated data ===
+	updatedJSON, err := utils.MapToJSON(currentData)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to convert map to JSON:", err)
 		return false
@@ -606,14 +480,6 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 	if err != nil {
 		logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to update database:", err)
 		return false
-	}
-
-	// Step 5: Simpan ke beforeData dan afterData global
-	if len(originalBefore) > 0 {
-		beforeData["data"] = originalBefore
-	}
-	if len(updatedAfter) > 0 {
-		afterData["data"] = updatedAfter
 	}
 
 	logger.Info(referenceId, "INFO - UpdateDeviceDataField - Successfully updated device data field")
@@ -634,160 +500,30 @@ Referenced by:
     TABLE "device.unit" CONSTRAINT "fk_attachment" FOREIGN KEY (attachment) REFERENCES sysfile.file(id) ON DELETE SET NULL
 */
 
-// handleUpdateDeviceAttachment updates the attachment information for a device
-func handleUpdateDeviceAttachment(referenceId string, tx *sqlx.Tx, rawAttachment map[string]any, deviceIdInt int64, deviceName string, beforeData, afterData map[string]any) (bool, error) {
-	if insertData, ok := rawAttachment["insert"].(map[string]any); ok {
-		logger.Debug(referenceId, "DEBUG - Update_Device_Data - attachment.insert:", insertData)
+// updateDeviceAttachment updates the attachment information for a device
+// updateDeviceAttachment updates the attachment information for a device
+// updateDeviceAttachment updates the attachment information for a device
+func updateDeviceAttachment(referenceId string, tx *sqlx.Tx, attachmentId sql.NullInt64, attachmentData string, attachmentName string, deviceId int64) bool {
+	logger.Debug(referenceId, "DEBUG - UpdateDeviceAttachment - attachmentData:", attachmentData)
+	logger.Debug(referenceId, "DEBUG - UpdateDeviceAttachment - attachmentName:", attachmentName)
 
-		// INSERT attachment (new attachment)
-		rawAttachmentData, hasData := insertData["attachment_data"]
-		if !hasData {
-			return false, fmt.Errorf("missing attachment_data for insert")
-		}
-
-		attachmentData, ok := rawAttachmentData.(string)
-		if !ok {
-			return false, fmt.Errorf("invalid attachment_data for insert")
-		}
-
-		imageName := fmt.Sprintf("%s_%s", deviceName, time.Now().Format("20060102150405"))
-
-		// Insert new attachment
-		insertQuery := `
-            INSERT INTO sysfile.file (data, name, tstamp)
-            VALUES ($1, $2, EXTRACT(epoch FROM now())::bigint)
-            RETURNING id;
-        `
-
-		var newAttachmentId int64
-		err := tx.QueryRow(insertQuery, attachmentData, imageName).Scan(&newAttachmentId)
-		if err != nil {
-			return false, fmt.Errorf("failed to insert attachment: %v", err)
-		}
-
-		logger.Info(referenceId, "INFO - Inserted new attachment with ID:", newAttachmentId)
-
-		// Update device with new attachment ID
-		updateDeviceQuery := `UPDATE device.unit SET attachment = $1 WHERE id = $2;`
-		_, err = tx.Exec(updateDeviceQuery, newAttachmentId, deviceIdInt)
-		if err != nil {
-			return false, fmt.Errorf("failed to update device with new attachment: %v", err)
-		}
-		// set beforedata
-		beforeData["attachment"] = map[string]any{}
-
-		// Set afterData for insert
-		afterData["attachment"] = map[string]any{
-			"name": imageName,
-		}
-
-	} else if updateData, ok := rawAttachment["update"].(map[string]any); ok {
-		// UPDATE attachment
-		logger.Debug(referenceId, "DEBUG - Update_Device_Data - attachment.update:", updateData)
-
-		rawAttachmentId, hasId := updateData["attachment_id"]
-		rawAttachmentData, hasData := updateData["attachment_data"]
-
-		if !hasId || !hasData {
-			return false, fmt.Errorf("missing attachment_id or data for update")
-		}
-
-		attachmentIdFloat, ok := rawAttachmentId.(float64)
-		if !ok {
-			return false, fmt.Errorf("invalid attachment_id for update")
-		}
-
-		attachmentData, ok := rawAttachmentData.(string)
-		if !ok {
-			return false, fmt.Errorf("invalid attachment_data for update")
-		}
-
-		attachmentId := sql.NullInt64{Int64: int64(attachmentIdFloat), Valid: true}
-		imageName := fmt.Sprintf("%s_%s", deviceName, time.Now().Format("20060102150405"))
-
-		// Get existing attachment data
-		var existingAttachment struct {
-			Name string `db:"name"`
-			Data string `db:"data"`
-		}
-		selectQuery := `SELECT name, data FROM sysfile.file WHERE id = $1`
-		err := tx.Get(&existingAttachment, selectQuery, attachmentId.Int64)
-		if err != nil {
-			return false, fmt.Errorf("failed to fetch existing attachment data: %v", err)
-		}
-
-		// Set beforeData
-		beforeData["attachment"] = map[string]any{}
-		if existingAttachment.Name != "" {
-			beforeData["attachment"] = map[string]any{
-				"name": existingAttachment.Name,
-			}
-		}
-
-		// Update attachment
-		updateQuery := `
-            UPDATE sysfile.file 
-            SET data = $1, name = $2, tstamp = EXTRACT(epoch FROM now())::bigint 
-            WHERE id = $3;
-        `
-		_, err = tx.Exec(updateQuery, attachmentData, imageName, attachmentId.Int64)
-		if err != nil {
-			return false, fmt.Errorf("failed to update attachment: %v", err)
-		}
-
-		// Set afterData
-		afterData["attachment"] = map[string]any{
-			"name": imageName,
-		}
-
-	} else if deleteData, ok := rawAttachment["delete"].(map[string]any); ok {
-		// DELETE attachment
-		logger.Debug(referenceId, "DEBUG - Update_Device_Data - attachment.delete:", deleteData)
-
-		rawAttachmentId, hasId := deleteData["attachment_id"]
-		if !hasId {
-			return false, fmt.Errorf("missing attachment_id for delete")
-		}
-
-		attachmentIdFloat, ok := rawAttachmentId.(float64)
-		if !ok {
-			return false, fmt.Errorf("invalid attachment_id for delete")
-		}
-
-		// Get existing attachment data for beforeData
-		var existingAttachment struct {
-			Name string `db:"name"`
-			Data string `db:"data"`
-		}
-		selectQuery := `SELECT name, data FROM sysfile.file WHERE id = $1`
-		err := tx.Get(&existingAttachment, selectQuery, int64(attachmentIdFloat))
-		if err != nil {
-			return false, fmt.Errorf("failed to fetch existing attachment data: %v", err)
-		}
-
-		// Set beforeData
-		beforeData["attachment"] = map[string]any{}
-		if existingAttachment.Name != "" {
-			beforeData["attachment"] = map[string]any{
-				"name": existingAttachment.Name,
-			}
-		}
-
-		// Delete attachment
-		deleteQuery := `DELETE FROM sysfile.file WHERE id = $1;`
-		_, err = tx.Exec(deleteQuery, int64(attachmentIdFloat))
-		if err != nil {
-			return false, fmt.Errorf("failed to delete attachment: %v", err)
-		}
-
-		// Set afterData for delete
-		afterData["attachment"] = map[string]any{}
-
-		logger.Info(referenceId, "INFO - Attachment deleted successfully")
-	} else {
-		logger.Info(referenceId, "INFO - No attachment changes detected")
-		return true, nil
+	if !attachmentId.Valid {
+		logger.Error(referenceId, "ERROR - No attachment ID found for device:", deviceId)
+		return false
 	}
 
-	return true, nil
+	updateQuery := `
+		UPDATE sysfile.file 
+		SET data = $1, name = $2, tstamp = EXTRACT(epoch FROM now())::bigint 
+		WHERE id = $3;
+	`
+
+	_, err := tx.Exec(updateQuery, attachmentData, attachmentName, attachmentId.Int64)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Failed to update attachment:", err)
+		return false
+	}
+
+	logger.Info(referenceId, "INFO - Successfully updated attachment for device:", deviceId)
+	return true
 }
