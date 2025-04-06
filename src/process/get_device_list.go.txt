@@ -121,13 +121,8 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 		orderBy = "last_tstamp"
 	}
 
-	sortType, ok := param["sort_type"].(string)
-	if !ok || sortType == "" {
-		sortType = "ASC"
-	}
-
 	// Query utama dengan pagination
-	finalQuery := fmt.Sprintf("%s ORDER BY %s %s LIMIT %d OFFSET %d;", baseQuery, orderBy, sortType, int(pageSize), offset)
+	finalQuery := fmt.Sprintf("%s ORDER BY %s ASC LIMIT %d OFFSET %d;", baseQuery, orderBy, int(pageSize), offset)
 	logger.Info(referenceId, "INFO - Get_Device_List - Final Query: ", finalQuery)
 
 	err = conn.Select(&devices, finalQuery)
