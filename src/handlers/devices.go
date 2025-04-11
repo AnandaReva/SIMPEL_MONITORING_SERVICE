@@ -132,7 +132,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	_, err = tx.Exec(`UPDATE device.unit SET st = 1 WHERE id = $1`, deviceData.DeviceID)
 	if err == nil {
-		_, err = tx.Exec(`INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, 'Connect')`, deviceData.DeviceID)
+		_, err = tx.Exec(`INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, 'connect')`, deviceData.DeviceID)
 	}
 
 	if err != nil || tx.Commit() != nil {
@@ -190,7 +190,7 @@ func handleDeviceDisconnect(referenceId string, conn *sqlx.DB, hub *pubsub.WebSo
 		return
 	}
 
-	_, err = tx.Exec(`INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, 'Disconnect')`, deviceID)
+	_, err = tx.Exec(`INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, 'disconnect')`, deviceID)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - handleDeviceDisconnect - Failed to insert disconnect activity")
 		tx.Rollback()

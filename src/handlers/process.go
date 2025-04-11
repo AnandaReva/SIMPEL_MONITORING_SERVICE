@@ -35,8 +35,8 @@ func initProcessMap() {
 		return
 	}
 
-	prcsMap["register_device"] = prcs{
-		function: process.Register_Device,
+	prcsMap["add_device_data"] = prcs{
+		function: process.Add_Device_Data,
 		class:    "device",
 		role:     []string{"system admin", "system master"},
 	}
@@ -63,6 +63,12 @@ func initProcessMap() {
 		function: process.Update_Device_Data,
 		class:    "user",
 		role:     []string{"system admin", "system master"},
+	}
+
+	prcsMap["get_device_activity_list"] = prcs{
+		function: process.Get_Device_Activity_List,
+		class:    "user",
+		role:     []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_dummy_active_devices"] = prcs{

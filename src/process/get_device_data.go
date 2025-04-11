@@ -12,29 +12,29 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-/* simpel=> \d  device.unit ;
-Table "device.unit"
-Column      |          Type          | Collation | Nullable |              Default
+/* \d device.unit;
+                                         Table "device.unit"
+     Column      |          Type          | Collation | Nullable |              Default
 -----------------+------------------------+-----------+----------+-----------------------------------
-id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
-name            | character varying(255) |           | not null |
-st              | integer                |           | not null |
-salt            | character varying(64)  |           | not null |
-salted_password | character varying(128) |           | not null |
-data            | jsonb                  |           | not null |
-create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
-last_tstamp     | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
-attachment      | bigint                 |           |          |
-read_interval   | integer                |           | not null |
+ id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
+ name            | character varying(255) |           | not null |
+ st              | integer                |           | not null |
+ data            | jsonb                  |           | not null |
+ create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ last_tstamp     | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ image           | bigint                 |           |          |
+ read_interval   | integer                |           | not null |
+ salted_password | character varying(128) |           | not null |
+ salt            | character varying(32)  |           | not null |
 Indexes:
-"unit_pkey" PRIMARY KEY, btree (id)
-"idx_device_name" btree (name)
+    "unit_pkey" PRIMARY KEY, btree (id)
+    "idx_device_name" btree (name)
 Foreign-key constraints:
-"fk_attachment" FOREIGN KEY (attachment) REFERENCES sysfile.file(id) ON DELETE SET NULL
+    "fk_attachment" FOREIGN KEY (image) REFERENCES sysfile.file(id) ON DELETE SET NULL
 Referenced by:
-TABLE "_timescaledb_internal._hyper_5_13_chunk" CONSTRAINT "13_13_fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-TABLE "device.device_activity" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+    TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+    TABLE "device.device_activity" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+
 
 \d: extra argument ";" ignored
 
@@ -65,24 +65,24 @@ type DeviceData struct {
 	LastTstamp   int64           `db:"last_tstamp" json:"device_last_tstamp"`
 	ReadInterval int16           `db:"read_interval" json:"device_read_interval"`
 	Data         json.RawMessage `db:"data" json:"device_data"`
-	Attachment   *int64          `db:"attachment"`
+	Image        *int64          `db:"image"`
 }
 
-type DeviceAttachment struct {
-	AttachmentId   int64  `db:"attachment_id" json:"attachment_id"`
-	AttachmentName string `db:"attachment_name" json:"attachment_name"`
-	AttachmentData string `db:"attachment_data" json:"attachment_data"`
+type DeviceImage struct {
+	FileId   int64  `db:"file_id" json:"file_id"`
+	FileName string `db:"file_name" json:"file_name"`
+	FileData string `db:"file_data" json:"file_data"`
 }
 
-type DeviceActivity struct {
-	ActivityId          int64  `db:"activity_id" json:"activity_id"`
-	ActivityActor       int64  `db:"activity_actor_id" json:"activity_actor_id"`
-	ActorFullName       string `db:"actor_full_name" json:"actor_full_name"`
-	ActivityDescription string `db:"activity_description" json:"activity_description"`
-	ActivityTstamp      int64  `db:"activity_tstamp" json:"activity_tstamp"`
-	ActivityBefore      string `db:"activity_before" json:"activity_before"`
-	ActivityAfter       string `db:"activity_after" json:"activity_after"`
-}
+// type DeviceActivity struct {
+// 	ActivityId          int64  `db:"activity_id" json:"activity_id"`
+// 	ActivityActor       int64  `db:"activity_actor_id" json:"activity_actor_id"`
+// 	ActorFullName       string `db:"actor_full_name" json:"actor_full_name"`
+// 	ActivityDescription string `db:"activity_description" json:"activity_description"`
+// 	ActivityTstamp      int64  `db:"activity_tstamp" json:"activity_tstamp"`
+// 	ActivityBefore      string `db:"activity_before" json:"activity_before"`
+// 	ActivityAfter       string `db:"activity_after" json:"activity_after"`
+// }
 
 func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{
@@ -136,19 +136,19 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 
 	// Query untuk mengambil data perangkat
 	queryDevice := `
-		SELECT 
-			du.id,
-			du.name,
-			du.create_tstamp, 
-			du.last_tstamp, 
-			du.read_interval,
-			COALESCE(du.data, '{}'::jsonb) AS data,
-			COALESCE(du.attachment, 0) AS attachment
-		FROM 
-			device.unit du
-		WHERE 
-			du.id = $1;
-	`
+	SELECT 
+		du.id,
+		du.name,
+		du.create_tstamp, 
+		du.last_tstamp, 
+		du.read_interval,
+		COALESCE(du.data, '{}'::jsonb) AS data,
+		COALESCE(du.image, 0) AS image
+	FROM 
+		device.unit du
+	WHERE 
+		du.id = $1;
+`
 
 	var deviceData DeviceData
 	if err := conn.Get(&deviceData, queryDevice, int64(deviceId)); err != nil {
@@ -158,62 +158,59 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
-	var deviceAttachment DeviceAttachment
+	var deviceImage DeviceImage
 
-	if deviceData.Attachment != nil && *deviceData.Attachment != 0 {
-
-		// Query untuk mengambil lampiran perangkat
-		queryAttachment := `
-		SELECT
-			sf.id AS attachment_id,
-			sf.name AS attachment_name,
-			sf.data AS attachment_data
-		FROM
-			sysfile.file sf
-		WHERE
-			sf.id = $1;
+	if deviceData.Image != nil && *deviceData.Image != 0 {
+		queryImage := `
+			SELECT
+				sf.id AS file_id,
+				sf.name AS file_name,
+				sf.data AS file_data
+			FROM
+				sysfile.file sf
+			WHERE
+				sf.id = $1;
 		`
-		if err := conn.Get(&deviceAttachment, queryAttachment, deviceData.Attachment); err != nil {
-			logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device attachment: ", err)
+		if err := conn.Get(&deviceImage, queryImage, deviceData.Image); err != nil {
+			logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device image: ", err)
 			result.ErrorCode = "500004"
 			result.ErrorMessage = "Internal Server Error"
 			return result
 		}
-		// Jika lampiran tidak ditemukan, set ke nil
-		if deviceAttachment.AttachmentId == 0 {
-			deviceAttachment.AttachmentId = 0
-			deviceAttachment.AttachmentName = ""
-			deviceAttachment.AttachmentData = ""
+
+		if deviceImage.FileId == 0 {
+			deviceImage.FileId = 0
+			deviceImage.FileName = ""
+			deviceImage.FileData = ""
 		}
-
 	}
 
-	// Query untuk mengambil aktivitas perangkat dengan full_name dari aktor
-	queryActivities := `
-		SELECT 
-			da.id AS activity_id, 
-			COALESCE(da.actor, 0) AS activity_actor_id,
-			COALESCE(su.full_name, '') AS actor_full_name,
-			da.activity AS activity_description,
-			da.tstamp AS activity_tstamp,
-			COALESCE(da.before, '{}'::jsonb) AS activity_before,
-			COALESCE(da.after, '{}'::jsonb) AS activity_after
-		FROM 
-			device.device_activity da
-		LEFT JOIN 
-			sysuser."user" su 
-			ON da.actor = su.id
-		WHERE 
-			da.unit_id = $1;
-	`
+	// // Query untuk mengambil aktivitas perangkat dengan full_name dari aktor
+	// queryActivities := `
+	// 	SELECT
+	// 		da.id AS activity_id,
+	// 		COALESCE(da.actor, 0) AS activity_actor_id,
+	// 		COALESCE(su.full_name, '') AS actor_full_name,
+	// 		da.activity AS activity_description,
+	// 		da.tstamp AS activity_tstamp,
+	// 		COALESCE(da.before, '{}'::jsonb) AS activity_before,
+	// 		COALESCE(da.after, '{}'::jsonb) AS activity_after
+	// 	FROM
+	// 		device.device_activity da
+	// 	LEFT JOIN
+	// 		sysuser."user" su
+	// 		ON da.actor = su.id
+	// 	WHERE
+	// 		da.unit_id = $1;
+	// `
 
-	var deviceActivities []DeviceActivity
-	if err := conn.Select(&deviceActivities, queryActivities, int64(deviceId)); err != nil {
-		logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device activities: ", err)
-		result.ErrorCode = "500003"
-		result.ErrorMessage = "Internal Server Error"
-		return result
-	}
+	// var deviceActivities []DeviceActivity
+	// if err := conn.Select(&deviceActivities, queryActivities, int64(deviceId)); err != nil {
+	// 	logger.Error(referenceId, "ERROR - Get_Device_Data - Failed to query device activities: ", err)
+	// 	result.ErrorCode = "500003"
+	// 	result.ErrorMessage = "Internal Server Error"
+	// 	return result
+	// }
 
 	// Format respons
 	result.Payload["status"] = "success"
@@ -225,8 +222,8 @@ func Get_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role strin
 		"device_last_tstamp":   deviceData.LastTstamp,
 		"device_read_interval": deviceData.ReadInterval,
 		"device_data":          deviceData.Data,
-		"device_attachment":    deviceAttachment,
-		"device_activities":    deviceActivities,
+		"device_image":         deviceImage,
+		//"device_activities":    deviceActivities,
 	}
 
 	return result

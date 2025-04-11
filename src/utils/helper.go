@@ -66,7 +66,7 @@ func Response(w http.ResponseWriter, result ResultFormat) {
 	jsonString, err := JSONencode(result)
 	if err != nil {
 		// Handle the error if JSON encoding fails
-		logger.Error("Unknown", "ERROR - Response encoding failed: ", err)
+		logger.Error("Response", "ERROR - Response encoding failed: ", err)
 		return
 	}
 
@@ -74,8 +74,10 @@ func Response(w http.ResponseWriter, result ResultFormat) {
 	_, err = w.Write([]byte(jsonString))
 	if err != nil {
 		// Handle writing error
-		logger.Error("Unknown", "ERROR - Failed to write response: ", err)
+		logger.Error("Response", "ERROR - Failed to write response: ", err)
 	}
+
+	logger.Info("Response", "INFO - Response: ", jsonString)
 }
 
 func Request(r *http.Request) (map[string]any, error) {
@@ -121,7 +123,7 @@ func MapToJSON(data map[string]any) (string, error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		logger.Error("ERROR - MapToJSON - Failed converting map to JSON: ", err)
-		return "", err 
+		return "", err
 	}
 	return string(jsonData), nil
 }
