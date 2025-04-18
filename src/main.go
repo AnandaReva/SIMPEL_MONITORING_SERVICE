@@ -118,6 +118,7 @@ func main() {
 	DBUSER := os.Getenv("DBUSER")
 	DBPASS := os.Getenv("DBPASS")
 	DBPORT, err := strconv.Atoi(os.Getenv("DBPORT"))
+	KEY := os.Getenv("KEY")
 	if err != nil {
 		logger.Error("MAIN", "Failed to parse DBPORT, using default (5432), reason: ", err)
 		DBPORT = 5432 // Default to 5432 if parsing fails
@@ -148,6 +149,9 @@ func main() {
 	if len(DBPASS) == 0 {
 		logger.Error("DBPASS environment variable is required")
 	}
+	if len(KEY) == 0 {
+		logger.Error("KEY environment variable is required")
+	}
 
 	logger.Info("MAIN", "-----------POSTGRESQL CONF : ")
 	logger.Info("MAIN", "DBDRIVER : ", DBDRIVER)
@@ -157,6 +161,7 @@ func main() {
 	logger.Debug("MAIN", "DBPASS : ", DBPASS)
 	logger.Info("MAIN", "DBNAME : ", DBNAME)
 	logger.Info("MAIN", "DBPOOLSIZE : ", DBPOOLSIZE)
+	logger.Info("MAIN", "KEY : ", KEY)
 
 	logger.Info("MAIN", "-----------REDIS CONF : ")
 	// log redis conf
@@ -228,7 +233,7 @@ func main() {
 	paths["/process"] = handlers.Process
 
 	paths["/device-connect"] = handlers.Device_Create_Conn
-	paths["/device-get-data"] = handlers.Device_Get_Data
+	//paths["/device-get-data"] = handlers.Device_Get_Data
 	paths["/user-connect"] = handlers.Users_Create_Conn
 
 	// Register endpoints with a multiplexer

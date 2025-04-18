@@ -45,7 +45,6 @@ func GeneratePBKDF2(text string, salt string, length int, iterations int) (strin
 }
 
 // Fungsi untuk mengenkripsi data menggunakan AES dengan mode CBC
-// Fungsi untuk mengenkripsi data menggunakan AES-256 CBC dengan output dalam hex
 func EncryptAES256(plainText string, keyHex string) (string, string, error) {
 	logger.Debug("EncryptAES256", "DEBUG - EncryptAES256 - Text(message):", plainText)
 	logger.Debug("EncryptAES256", "DEBUG - EncryptAES256 - Key:", keyHex)

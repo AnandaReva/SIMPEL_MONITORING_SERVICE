@@ -14,6 +14,7 @@ import (
 	"monitoring_service/process"
 	"monitoring_service/utils"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -25,9 +26,10 @@ var InitPrcs bool = false
 var prcsMap = make(map[string]prcs)
 
 type prcs struct {
-	function func(referenceId string, dbConn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat
-	class    string
-	role     []string /* ["guest", "system user", "system admin", "system master"],   */
+	userFunction   func(referenceId string, dbConn *sqlx.DB, userId int64, role string, param map[string]any) utils.ResultFormat
+	deviceFunction func(referenceId string, dbConn *sqlx.DB, deviceId int64, param map[string]any) utils.ResultFormat
+	class          string
+	role           []string
 }
 
 func initProcessMap() {
@@ -35,46 +37,53 @@ func initProcessMap() {
 		return
 	}
 
+	// user processes
 	prcsMap["add_device_data"] = prcs{
-		function: process.Add_Device_Data,
-		class:    "device",
-		role:     []string{"system admin", "system master"},
+		userFunction: process.Add_Device_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
 	}
 
 	prcsMap["get_active_devices"] = prcs{
-		function: process.Get_Active_Devices,
-		class:    "user",
-		role:     []string{"system user", "system admin", "system master"},
+		userFunction: process.Get_Active_Devices,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_device_list"] = prcs{
-		function: process.Get_Device_List,
-		class:    "user",
-		role:     []string{"system user", "system admin", "system master"},
+		userFunction: process.Get_Device_List,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_device_data"] = prcs{
-		function: process.Get_Device_Data,
-		class:    "user",
-		role:     []string{"system admin", "system master"},
+		userFunction: process.Get_Device_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
 	}
 
 	prcsMap["update_device_data"] = prcs{
-		function: process.Update_Device_Data,
-		class:    "user",
-		role:     []string{"system admin", "system master"},
+		userFunction: process.Update_Device_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
 	}
 
 	prcsMap["get_device_activity_list"] = prcs{
-		function: process.Get_Device_Activity_List,
-		class:    "user",
-		role:     []string{"system user", "system admin", "system master"},
+		userFunction: process.Get_Device_Activity_List,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_dummy_active_devices"] = prcs{
-		function: process.Get_Dummy_Active_Devices,
-		class:    "user",
-		role:     []string{"system user", "system admin", "system master"},
+		userFunction: process.Get_Dummy_Active_Devices,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+
+	/// device processes
+	prcsMap["device_get_data"] = prcs{
+		deviceFunction: process.Device_Get_Data,
+		class:          "device",
 	}
 
 	InitPrcs = true
@@ -85,6 +94,11 @@ type UserInfo struct {
 	UserRole    string `db:"user_role"`
 	SessionID   string
 	SessionHash string `db:"session_hash"`
+}
+
+type DeviceInfo struct {
+	DeviceId   int64  `db:"id"`
+	DeviceName string `db:"name"`
 }
 
 func Process(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +122,8 @@ func Process(w http.ResponseWriter, r *http.Request) {
 
 	processName := r.Header.Get("process")
 	if processName == "" {
+		logger.Warning(referenceId, "PROCESS - Warning - Missing process name in header")
 		utils.Response(w, utils.ResultFormat{ErrorCode: "400001", ErrorMessage: "Invalid request"})
-		logger.Error(referenceId, "PROCESS - ERROR - Missing process name in header")
 		return
 	}
 	logger.Info(referenceId, "PROCECSS - INFO - process_name: ", processName)
@@ -122,52 +136,84 @@ func Process(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := db.GetConnection()
 	if err != nil {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "500000", ErrorMessage: "Internal server error"})
 		logger.Error(referenceId, "PROCESS - ERROR - Database connection error:", err)
+		utils.Response(w, utils.ResultFormat{ErrorCode: "500000", ErrorMessage: "Internal server error"})
 		return
 	}
 	defer db.ReleaseConnection()
 
-	// Validasi sesi pengguna
-	userInfo, err := validateSession(r, conn, referenceId)
-	if err != nil {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "401000", ErrorMessage: "Unauthorized"})
-		logger.Error(referenceId, "PROCESS - ERROR - error when validating user session : ", err)
-		return
-	}
+	switch prc.class {
+	case "user":
+		logger.Info(referenceId, "PROCESS - INFO - Executing USER class process")
 
-	userIndoLogStr := fmt.Sprintf("USER ID : %d , USER ROLE: %s", userInfo.UserID, userInfo.UserRole)
+		userInfo, err := validateSession(r, conn, referenceId)
+		if err != nil {
+			logger.Warning(referenceId, "PROCESS - WARNING - error when validating user session: ", err)
+			utils.Response(w, utils.ResultFormat{ErrorCode: "401000", ErrorMessage: "Unauthorized"})
+			return
+		}
 
-	logger.Info(referenceId, "INFO - ", userIndoLogStr)
+		logger.Info(referenceId, fmt.Sprintf("INFO - USER ID: %d, USER ROLE: %s", userInfo.UserID, userInfo.UserRole))
 
-	// Validasi peran pengguna
-	if len(prc.role) > 0 && !utils.Contains(prc.role, userInfo.UserRole) {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "403000", ErrorMessage: "Forbidden"})
-		logger.Error(referenceId, "PROCESS ERROR - User does not have the required role")
-		return
-	}
+		if len(prc.role) > 0 && !utils.Contains(prc.role, userInfo.UserRole) {
+			logger.Warning(referenceId, "PROCESS - WARNING - User does not have the required role")
+			utils.Response(w, utils.ResultFormat{ErrorCode: "403000", ErrorMessage: "Forbidden"})
+			return
+		}
 
-	var param map[string]interface{}
-	param, err = utils.Request(r)
-	if err != nil {
-		logger.Info(referenceId, "INFO - SIGNATURE INVALID")
+		param, err := utils.Request(r)
+		if err != nil {
+			logger.Error(referenceId, "ERROR - Failed to parse request body:", err)
+			utils.Response(w, utils.ResultFormat{ErrorCode: "50001", ErrorMessage: "Internal server error"})
+			return
+		}
+
+		if err := validateSignature(r, param, userInfo, referenceId); err != nil {
+			logger.Warning(referenceId, "WARNING -", err)
+			utils.Response(w, utils.ResultFormat{ErrorCode: "401002", ErrorMessage: "Unauthorized"})
+			return
+		}
+
+		logger.Info(referenceId, "INFO - SIGNATURE VALID")
+
+		result := prc.userFunction(referenceId, conn, userInfo.UserID, userInfo.UserRole, param)
+		utils.Response(w, result)
+
+	case "device":
+		logger.Info(referenceId, "PROCESS - INFO - Executing DEVICE class process")
+
+		deviceInfo, err := validateDevice(r, conn, referenceId)
+		if err != nil {
+			logger.Error(referenceId, "ERROR - Device validation failed: ", err)
+
+			var code string
+			switch err.Error() {
+			case "invalid request":
+				code = "400001"
+			case "unauthorized":
+				code = "401001"
+			case "internal server error":
+				code = "500001"
+			default:
+				code = "401000"
+			}
+
+			utils.Response(w, utils.ResultFormat{
+				ErrorCode:    code,
+				ErrorMessage: err.Error(),
+			})
+			return
+		}
+
+		param, _ := utils.Request(r)
+		result := prc.deviceFunction(referenceId, conn, deviceInfo.DeviceId, param)
+		utils.Response(w, result)
+
+	default:
+		logger.Warning(referenceId, "WARNING - PROCESS - INFO - Class do not exist", prc.class)
 		utils.Response(w, utils.ResultFormat{ErrorCode: "400003", ErrorMessage: "Invalid request"})
-		logger.Error(referenceId, "ERROR - Failed to parse request body:", err)
-		return
 	}
-
-	// Validasi signature
-	if err := validateSignature(r, param, userInfo, referenceId); err != nil {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "401002", ErrorMessage: "Unauthorized"})
-		logger.Error(referenceId, "ERROR -", err)
-		return
-	}
-	logger.Info(referenceId, "INFO - SIGNATURE VALID")
-
-	result := prc.function(referenceId, conn, userInfo.UserID, userInfo.UserRole, param)
-	utils.Response(w, result)
 }
-
 func validateSession(r *http.Request, conn *sqlx.DB, referenceId string) (UserInfo, error) {
 	sessionID := r.Header.Get("session_id")
 	if sessionID == "" {
@@ -175,17 +221,19 @@ func validateSession(r *http.Request, conn *sqlx.DB, referenceId string) (UserIn
 	}
 
 	var userInfo UserInfo
-	query := `SELECT su.id AS user_id, su.role AS user_role, ss.session_hash 
-		FROM sysuser.user su LEFT JOIN sysuser.session ss 
-		ON su.id = ss.user_id WHERE ss.session_id = $1`
+	query := `
+		SELECT su.id AS user_id, su.role AS user_role, ss.session_hash 
+		FROM sysuser.user su 
+		LEFT JOIN sysuser.session ss ON su.id = ss.user_id 
+		WHERE ss.session_id = $1`
 	err := conn.QueryRow(query, sessionID).Scan(&userInfo.UserID, &userInfo.UserRole, &userInfo.SessionHash)
 	if err != nil {
 		return UserInfo{}, errors.New("unauthorized: Invalid session")
 	}
+
 	return userInfo, nil
 }
-
-func validateSignature(r *http.Request, param map[string]interface{}, userInfo UserInfo, referenceId string) error {
+func validateSignature(r *http.Request, param map[string]any, userInfo UserInfo, referenceId string) error {
 	bodyRequest, err := json.Marshal(param)
 	if err != nil {
 		return errors.New("failed to marshal request body")
@@ -195,15 +243,58 @@ func validateSignature(r *http.Request, param map[string]interface{}, userInfo U
 	computedSignature, _ := crypto.GenerateHMAC(message, userInfo.SessionHash)
 	clientSignature := r.Header.Get("signature")
 
-	logger.Info(referenceId, "INFO - message:  ", message)
-	logger.Info(referenceId, "INFO - key:  ", userInfo.SessionHash)
-
-	logger.Debug(referenceId, "DEBUG - Computed signature:  ", computedSignature)
-	logger.Debug(referenceId, "DEBUG - Client signature:  ", clientSignature)
+	logger.Info(referenceId, "INFO - message: ", message)
+	logger.Info(referenceId, "INFO - key: ", userInfo.SessionHash)
+	logger.Debug(referenceId, "DEBUG - Computed signature: ", computedSignature)
+	logger.Debug(referenceId, "DEBUG - Client signature: ", clientSignature)
 
 	if computedSignature != clientSignature {
 		return errors.New("unauthorized: error signature dont match")
 	}
 
 	return nil
+}
+func validateDevice(r *http.Request, conn *sqlx.DB, referenceId string) (DeviceInfo, error) {
+	param, err := utils.Request(r)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Failed to parse request body:", err)
+		return DeviceInfo{}, errors.New("internal server error")
+	}
+
+	deviceName, okName := param["name"].(string)
+	devicePassword, okPass := param["password"].(string)
+	if !okName || !okPass || deviceName == "" || devicePassword == "" {
+		logger.Error(referenceId, "ERROR - Device_Get_Data - Invalid device name or password")
+		return DeviceInfo{}, errors.New("invalid request")
+	}
+
+	var (
+		salt, saltedPassword string
+		deviceId             int64
+	)
+	query := `SELECT id, salt, salted_password FROM device.unit WHERE name = $1`
+	err = conn.QueryRow(query, deviceName).Scan(&deviceId, &salt, &saltedPassword)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Device_Get_Data - Device not found or DB error:", err)
+		return DeviceInfo{}, errors.New("unauthorized")
+	}
+
+	key := os.Getenv("KEY")
+	if key == "" {
+		logger.Error(referenceId, "ERROR - Device_Get_Data - KEY is not set")
+		return DeviceInfo{}, errors.New("internal server error")
+	}
+
+	plainTextPassword, err := crypto.DecryptAES256(saltedPassword, salt, key)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Device_Get_Data - Failed to decrypt password: ", err)
+		return DeviceInfo{}, errors.New("internal server error")
+	}
+
+	if plainTextPassword != devicePassword {
+		logger.Warning(referenceId, "WARNING - Device_Get_Data - Password invalid")
+		return DeviceInfo{}, errors.New("unauthorized")
+	}
+
+	return DeviceInfo{DeviceId: deviceId, DeviceName: deviceName}, nil
 }
