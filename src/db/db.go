@@ -44,14 +44,20 @@ func GetConnection() (*sqlx.DB, error) {
 		DBUSER := os.Getenv("DBUSER")
 		DBPASS := os.Getenv("DBPASS")
 		DBPORT, errPort := strconv.Atoi(os.Getenv("DBPORT"))
-		DBPOOLSIZE, err := strconv.Atoi(os.Getenv("DBPOOLSIZE"))
-		if err != nil {
-			logger.Warning("MAIN", "Failed to parse DBPOOLSIZE, using default (20)", errPort)
-			DBPOOLSIZE = 20 // Default to 20 if parsing fails
+
+		DBPOOLSIZE, errPoolSize := strconv.Atoi(os.Getenv("DBPOOLSIZE"))
+		if errPoolSize != nil {
+			logger.Warning("MAIN", "Failed to parse DBPOOLSIZE, using default (20)", errPoolSize)
+			DBPOOLSIZE = 100 // Default to 20 if parsing fails
+		}
+
+		if errPort != nil {
+			logger.Error("MAIN", "Failed to parse DBPORT, using default (5432)", errPort)
+			DBPORT = 5432 // Default to 5432 if parsing fails
 		}
 
 		errInit := InitDB(DBDRIVER, DBHOST, DBPORT, DBUSER, DBPASS, DBNAME, DBPOOLSIZE)
-		if err != nil {
+		if errInit != nil {
 			logger.Error("DB", "Failed to reinitialize DB pool", errInit)
 			return nil, errors.New("failed to reinitialize database connection")
 		}

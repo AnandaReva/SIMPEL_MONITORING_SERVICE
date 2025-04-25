@@ -1,6 +1,14 @@
 /*
 format : http://host/handler/process
-exp :  http://localhost:5000/device/register_device
+
+	exp :  headers: {
+				"Content-Type" : "application/json",
+				"process" : "get_device_list",
+			}
+			body : {
+				"device_id" : 1,
+				"page_size" : 5,
+			}
 */
 package handlers
 
@@ -80,6 +88,24 @@ func initProcessMap() {
 		role:         []string{"system user", "system admin", "system master"},
 	}
 
+	// user managemnt
+	prcsMap["get_user_list"] = prcs{
+		userFunction: process.Get_User_List,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	prcsMap["get_user_data"] = prcs{
+		userFunction: process.Get_User_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+	prcsMap["change_user_data"] = prcs{
+		userFunction: process.Change_User_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
 	/// device processes
 	prcsMap["device_get_data"] = prcs{
 		deviceFunction: process.Device_Get_Data,
@@ -117,6 +143,7 @@ func Process(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "405000", ErrorMessage: "Method not allowed"})
+		logger.Warning(referenceId, "WARNING - Process - Method Not Allowed")
 		return
 	}
 
@@ -140,6 +167,7 @@ func Process(w http.ResponseWriter, r *http.Request) {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "500000", ErrorMessage: "Internal server error"})
 		return
 	}
+
 	defer db.ReleaseConnection()
 
 	switch prc.class {
@@ -204,6 +232,8 @@ func Process(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+
+		logger.Info(referenceId, fmt.Sprintf("INFO - DEVICE ID: %d, DEVICE NAME: %s", deviceInfo.DeviceId, deviceInfo.DeviceName))
 
 		param, _ := utils.Request(r)
 		result := prc.deviceFunction(referenceId, conn, deviceInfo.DeviceId, param)

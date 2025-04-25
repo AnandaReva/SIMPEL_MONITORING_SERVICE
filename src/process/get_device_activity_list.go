@@ -66,13 +66,13 @@ import (
 )
 
 type DeviceActivity struct {
-	ActivityId int64           `db:"id" json:"activity_id"`
-	ActorRaw   json.RawMessage `db:"actor" json:"-"` // untuk unmarshalling manual
-	Actor      *ActivityActor  `json:"actor"`        // final result
-	Activity   string          `db:"activity" json:"activity_name"`
-	Tstamp     int64           `db:"tstamp" json:"tstamp"`
-	Before     string          `db:"before" json:"activity_before"`
-	After      string          `db:"after" json:"activity_after"`
+	ActivityId int64            `db:"id" json:"activity_id"`
+	ActorRaw   *json.RawMessage `db:"actor" json:"-"`
+	Actor      *ActivityActor   `json:"actor"` // final result
+	Activity   string           `db:"activity" json:"activity_name"`
+	Tstamp     int64            `db:"tstamp" json:"tstamp"`
+	Before     string           `db:"before" json:"activity_before"`
+	After      string           `db:"after" json:"activity_after"`
 }
 
 type ActivityActor struct {
@@ -143,10 +143,9 @@ func Get_Device_Activity_List(referenceId string, conn *sqlx.DB, userID int64, r
 		WHERE unit_id = $1
 	`
 
-	queryParams := []interface{}{int64(deviceId)}
+	queryParams := []any{int64(deviceId)}
 
 	logger.Debug(referenceId, "DEBUG - Get_Device_Activity_List - Query Parameters: ", queryParams)
-
 
 	// Apply activity filter if provided
 	filter, hasFilter := param["filter"].(string)
@@ -207,8 +206,8 @@ func Get_Device_Activity_List(referenceId string, conn *sqlx.DB, userID int64, r
 	activities := make([]DeviceActivity, 0, len(rawActivities))
 	for _, raw := range rawActivities {
 		var actor ActivityActor
-		if len(raw.ActorRaw) > 0 && string(raw.ActorRaw) != "null" {
-			if err := json.Unmarshal(raw.ActorRaw, &actor); err != nil {
+		if raw.ActorRaw != nil && string(*raw.ActorRaw) != "null" {
+			if err := json.Unmarshal(*raw.ActorRaw, &actor); err != nil {
 				logger.Error(referenceId, "ERROR - Failed to decode actor JSON: ", err)
 				result.ErrorCode = "500004"
 				result.ErrorMessage = "Internal server error"
@@ -216,11 +215,11 @@ func Get_Device_Activity_List(referenceId string, conn *sqlx.DB, userID int64, r
 			}
 			raw.Actor = &actor
 		}
+
 		activities = append(activities, raw)
 	}
 
-	logger.Debug(referenceId, "DEBUG - Get_Device_Activity_List activities result: " , activities)
-
+	logger.Debug(referenceId, "DEBUG - Get_Device_Activity_List activities result: ", activities)
 
 	logger.Debug(referenceId, "DEBUG - Get_Device_Activity_List - totalData: ", totalData)
 

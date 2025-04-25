@@ -27,6 +27,7 @@ import (
 */
 
 // WebSocketHub menyimpan koneksi WebSocket dan integrasi Redis
+
 type WebSocketHub struct {
 	mu           sync.Mutex
 	Devices      map[*websocket.Conn]*DeviceClient
@@ -42,7 +43,7 @@ type DeviceClient struct {
 	DeviceName       string
 	Conn             *websocket.Conn
 	ChannelToPublish string
-	PubSub           *redis.PubSub // Menyimpan referensi PubSub untuk menghindari kebocoran
+	PubSub           *redis.PubSub
 }
 
 type UserClient struct {
@@ -51,7 +52,7 @@ type UserClient struct {
 	Role              string
 	Conn              *websocket.Conn
 	ChannelSubscribed string
-	PubSub            *redis.PubSub // Menyimpan referensi PubSub untuk menghindari kebocoran
+	PubSub            *redis.PubSub
 	PubSubCancel      context.CancelFunc
 }
 
@@ -85,7 +86,6 @@ func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
 	logger.Debug(referenceId, "GetWebSocketHub - 3")
 	return wsHub, nil
 }
-
 
 // Inisialisasi WebSocketHub dengan Redis
 func NewWebSocketHub(referenceId string) (*WebSocketHub, error) {

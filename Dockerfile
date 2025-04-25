@@ -1,22 +1,22 @@
 # Gunakan image base Golang
-#FROM golang:alpine
-FROM golang:1.21 AS builder
+FROM golang:alpine
+#FROM golang:1.21 AS builder
 
-# Install git untuk dependency management
+# Install git for dependency management
 RUN apk update && apk add --no-cache git
 
-# Set direktori kerja dalam container
+# Set working dir in container
 WORKDIR /app
 
-# Salin semua file dari direktori saat ini ke dalam /app di container
+
 COPY . /app
 
-# Download semua dependency Go
+# Download dependencies
 RUN go mod tidy 
 
-# Build binary aplikasi
+# Build binary
 RUN go build -o monitoring_service
 
-# Jalankan aplikasi saat container dimulai
+# Run  app when started
 ENTRYPOINT ["/app/monitoring_service"]
 

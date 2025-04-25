@@ -4,17 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"monitoring_service/db"
 	"monitoring_service/logger"
 	"monitoring_service/pubsub"
 	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 // DeviceData sesuai dengan tabel device.data
 type DeviceData struct {
 	Device_Id    int64 // unit_id
-	Tstamp       time.Time
+	Timestamp    time.Time
 	Voltage      float64
 	Current      float64
 	Power        float64
@@ -24,48 +25,51 @@ type DeviceData struct {
 }
 
 /*
-simple=> \d device.unit ;
-Table "device.unit"
-Column      |          Type          | Collation | Nullable |              Default
-
+simpel=> \d device.unit
+                                         Table "device.unit"
+     Column      |          Type          | Collation | Nullable |              Default
 -----------------+------------------------+-----------+----------+-----------------------------------
-
-id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
-name            | character varying(255) |           | not null |
-status          | integer                |           | not null |
-salt            | character varying(64)  |           | not null |
-salted_password | character varying(128) |           | not null |
-data            | jsonb                  |           | not null |
-create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
-
+ id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
+ name            | character varying(255) |           | not null |
+ st              | integer                |           | not null |
+ data            | jsonb                  |           | not null |
+ create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ last_tstamp     | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ image           | bigint                 |           |          |
+ read_interval   | integer                |           | not null |
+ salted_password | character varying(128) |           | not null |
+ salt            | character varying(32)  |           | not null |
 Indexes:
-
-"unit_pkey" PRIMARY KEY, btree (id)
-
+    "unit_pkey" PRIMARY KEY, btree (id)
+    "idx_device_name" btree (name)
+Foreign-key constraints:
+    "fk_attachment" FOREIGN KEY (image) REFERENCES sysfile.file(id) ON DELETE SET NULL
 Referenced by:
+    TABLE "_timescaledb_internal._hyper_5_38_chunk" CONSTRAINT "38_38_fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+    TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+    TABLE "device.device_activity" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 
-TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-simpel=> \d device.data;
-                                            Table "device.data"
-    Column    |           Type           | Collation | Nullable |                 Default
---------------+--------------------------+-----------+----------+------------------------------------------
- id           | bigint                   |           | not null | nextval('device.data2_id_seq'::regclass)
- unit_id      | bigint                   |           | not null |
- tstamp       | timestamp |           | not null | now()
- voltage      | double precision         |           | not null |
- current      | double precision         |           | not null |
- power        | double precision         |           | not null |
- energy       | double precision         |           | not null |
- frequency    | double precision         |           | not null |
- power_factor | double precision         |           | not null |
+
+simpel=> \d device.data
+                                             Table "device.data"
+    Column    |            Type             | Collation | Nullable |                 Default
+--------------+-----------------------------+-----------+----------+------------------------------------------
+ id           | bigint                      |           | not null | nextval('device.data2_id_seq'::regclass)
+ unit_id      | bigint                      |           | not null |
+ timestamp    | timestamp without time zone |           | not null | now()
+ voltage      | double precision            |           | not null |
+ current      | double precision            |           | not null |
+ power        | double precision            |           | not null |
+ energy       | double precision            |           | not null |
+ frequency    | double precision            |           | not null |
+ power_factor | double precision            |           | not null |
 Indexes:
-    "data_tstamp_idx" btree (tstamp DESC)
-    "data_unique_idx" UNIQUE, btree (id, tstamp)
+    "data_tstamp_idx" btree ("timestamp" DESC)
+    "data_unique_idx" UNIQUE, btree (id, "timestamp")
 Foreign-key constraints:
     "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 Triggers:
     ts_insert_blocker BEFORE INSERT ON device.data FOR EACH ROW EXECUTE FUNCTION _timescaledb_functions.insert_blocker()
-
 
 */
 // StartRedisToDBWorker menjalankan worker untuk memindahkan data dari Redis ke PostgreSQL secara periodik
@@ -102,7 +106,7 @@ func isRedisMemoryFull(memoryLimit int64) (bool, error) {
 	return usedMemory > memoryLimit, nil
 }
 
-func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-chan struct{}) {
+func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-chan struct{}, dbConn *sqlx.DB) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -130,11 +134,11 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 			}
 
 			if len(data) > 0 {
-				if err := saveDataToDB(data); err != nil {
+				if err := dumpDataToDB(data, dbConn); err != nil {
 					logger.Error("WORKER", "ERROR - Failed to save data to DB: ", err)
-					filteredData, err := validateDeviceData(data)
+					filteredData, err := validateDeviceData(data, dbConn)
 					if err == nil {
-						if err := saveDataToDB(filteredData); err != nil {
+						if err := dumpDataToDB(filteredData, dbConn); err != nil {
 							logger.Error("WORKER", "Retry failed, clearing Redis buffer")
 							clearRedisBuffer()
 						}
@@ -169,8 +173,8 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 
 	for _, item := range data {
 		var deviceData struct {
-			Device_Id    int64   `json:"device_id"`
-			Tstamp       string  `json:"tstamp"`
+			Device_Id    int64   `json:"unit_id"`
+			Timestamp    string  `json:"timestamp"`
 			Voltage      float64 `json:"voltage"`
 			Current      float64 `json:"current"`
 			Power        float64 `json:"power"`
@@ -187,9 +191,9 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 		}
 
 		// Coba parse timestamp
-		parsedTime, err := time.Parse("2006-01-02 15:04:05", deviceData.Tstamp)
+		parsedTime, err := time.Parse("2006-01-02 15:04:05", deviceData.Timestamp)
 		if err != nil {
-			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Tstamp))
+			logger.Error("WORKER", fmt.Sprintf("ERROR - Invalid timestamp format: %v - TIMESTAMP: %s", err, deviceData.Timestamp))
 			invalidItems = append(invalidItems, item)
 			continue
 		}
@@ -197,7 +201,7 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 		// Data valid, tambahkan ke parsedData
 		parsedData = append(parsedData, DeviceData{
 			Device_Id:    deviceData.Device_Id,
-			Tstamp:       parsedTime.UTC(),
+			Timestamp:    parsedTime.UTC(),
 			Voltage:      deviceData.Voltage,
 			Current:      deviceData.Current,
 			Power:        deviceData.Power,
@@ -222,15 +226,15 @@ func fetchRedisBuffer() ([]DeviceData, error) {
 	return parsedData, nil
 }
 
-func validateDeviceData(data []DeviceData) ([]DeviceData, error) {
+func validateDeviceData(data []DeviceData, dbConn *sqlx.DB) ([]DeviceData, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
 
-	dbConn, err := db.GetConnection()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get DB connection: %w", err)
-	}
+	// dbConn, err := db.GetConnection()
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get DB connection: %w", err)
+	// }
 
 	validUnitIDs := make(map[int64]bool)
 	rows, err := dbConn.Query("SELECT id FROM device.unit")
@@ -246,6 +250,7 @@ func validateDeviceData(data []DeviceData) ([]DeviceData, error) {
 		}
 		validUnitIDs[unitID] = true
 	}
+	logger.Debug("WORKER", fmt.Sprintf("INFO - Valid unit IDs retrieved: %d", len(validUnitIDs)))
 
 	var filteredData []DeviceData
 	for _, deviceData := range data {
@@ -257,15 +262,10 @@ func validateDeviceData(data []DeviceData) ([]DeviceData, error) {
 	return filteredData, nil
 }
 
-func saveDataToDB(data []DeviceData) error {
+func dumpDataToDB(data []DeviceData, dbConn *sqlx.DB) error {
 	if len(data) == 0 {
 		clearRedisBuffer()
 		return nil
-	}
-
-	dbConn, err := db.GetConnection()
-	if err != nil {
-		return fmt.Errorf("failed to get DB connection: %w", err)
 	}
 
 	// Gunakan batch insert untuk efisiensi
@@ -274,7 +274,7 @@ func saveDataToDB(data []DeviceData) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	stmt, err := tx.Prepare(`INSERT INTO device.data (unit_id, tstamp, voltage, current, power, energy, frequency, power_factor) 
+	stmt, err := tx.Prepare(`INSERT INTO device.data (unit_id, timestamp, voltage, current, power, energy, frequency, power_factor) 
 							VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`)
 	if err != nil {
 		tx.Rollback()
@@ -283,7 +283,7 @@ func saveDataToDB(data []DeviceData) error {
 	defer stmt.Close()
 
 	for _, d := range data {
-		_, err := stmt.Exec(d.Device_Id, d.Tstamp, d.Voltage, d.Current, d.Power, d.Energy, d.Frequency, d.Power_factor)
+		_, err := stmt.Exec(d.Device_Id, d.Timestamp, d.Voltage, d.Current, d.Power, d.Energy, d.Frequency, d.Power_factor)
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to execute insert: %w", err)

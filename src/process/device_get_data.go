@@ -34,7 +34,6 @@ Referenced by:
 */
 
 type DeviceDataInfo struct {
-	DeviceId           int64 `db:"id" json:"device_id"`
 	DeviceReadInterval int16 `db:"read_interval" json:"device_read_interval"`
 }
 
@@ -60,11 +59,11 @@ func Device_Get_Data(referenceId string, conn *sqlx.DB, deviceId int64, param ma
 		result.ErrorMessage = "Internal Server Error"
 		return result
 	}
-	logger.Debug(referenceId, "DEBUG - Device_Get_Data - Device data retrieved:", fmt.Sprintf("Device ID: %d , Device Read Interval: %d", deviceData.DeviceId, deviceData.DeviceReadInterval))
+	logger.Debug(referenceId, "DEBUG - Device_Get_Data - Device data retrieved:", fmt.Sprintf("Device ID: %d , Device Read Interval: %d", deviceId, deviceData.DeviceReadInterval))
 
 	result.Payload["status"] = "success"
 	result.Payload["device_data"] = map[string]any{
-		"device_id":            deviceData.DeviceId,
+		"device_id":            deviceId,
 		"device_read_interval": deviceData.DeviceReadInterval,
 	}
 	return result

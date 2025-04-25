@@ -10,7 +10,7 @@ simpel=> \d device.device_activity
 	unit_id  | bigint |           | not null |
 	actor    | bigint |           |          |
 	activity | text   |           | not null |
-	tstamp   | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
+	timestamp   | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
 
 Indexes:
 
@@ -58,34 +58,27 @@ type DeviceClientData struct {
 }
 
 func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
+	// Ambil referenceId dari context
 	var ctxKey HTTPContextKey = "requestID"
 	referenceId, ok := r.Context().Value(ctxKey).(string)
 	if !ok {
 		referenceId = "unknown"
 	}
-
 	startTime := time.Now()
 	defer func() {
 		logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Execution completed in:", time.Since(startTime))
 	}()
 
+	// Validasi query params
 	params := r.URL.Query()
-	logger.Info(referenceId, "INFO - Device_Create_Conn Incoming WebSocket connection - param:", params)
-
 	deviceName := params.Get("name")
 	devicePassword := params.Get("password")
-
-	logStr := fmt.Sprintf("device_name= %s , device_password= %s ", deviceName, devicePassword)
-	logger.Info(referenceId, "INFO - ", logStr)
-
 	if strings.TrimSpace(deviceName) == "" || strings.TrimSpace(devicePassword) == "" {
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400000",
-			ErrorMessage: "Invalid Request",
-		})
+		utils.Response(w, utils.ResultFormat{ErrorCode: "400000", ErrorMessage: "Invalid Request"})
 		return
 	}
 
+	// Ambil connection DB
 	conn, err := db.GetConnection()
 	if err != nil {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "500000", ErrorMessage: "Internal Server Error"})
@@ -93,10 +86,15 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.ReleaseConnection()
 
+	// Ambil data device dari tabel unit
 	var deviceData DeviceClientData
 	query := `SELECT id, name, salt, salted_password FROM device.unit WHERE name = $1`
-	err = conn.QueryRow(query, deviceName).Scan(&deviceData.DeviceID, &deviceData.DeviceName, &deviceData.Salt, &deviceData.SaltedPassword)
-	if err != nil {
+	if err := conn.QueryRow(query, deviceName).Scan(
+		&deviceData.DeviceID,
+		&deviceData.DeviceName,
+		&deviceData.Salt,
+		&deviceData.SaltedPassword,
+	); err != nil {
 		if err == sql.ErrNoRows {
 			utils.Response(w, utils.ResultFormat{ErrorCode: "401000", ErrorMessage: "Unauthorized"})
 		} else {
@@ -105,115 +103,128 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Decrypt password
 	key := os.Getenv("KEY")
 	if key == "" {
 		logger.Error(referenceId, "ERROR - Device_Create_Conn - KEY is not set")
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "500001",
-			ErrorMessage: "Internal server error",
-		})
+		utils.Response(w, utils.ResultFormat{ErrorCode: "500001", ErrorMessage: "Internal server error"})
+		return
+	}
+	plainPwd, err := crypto.DecryptAES256(deviceData.SaltedPassword, deviceData.Salt, key)
+	if err != nil || plainPwd != devicePassword {
+		utils.Response(w, utils.ResultFormat{ErrorCode: "401001", ErrorMessage: "Unauthorized"})
 		return
 	}
 
-	logger.Debug(referenceId, "DEBUG - Device_Create_Conn - key:", key)
-	logger.Info(referenceId, "INFO - Device_Create_Conn - Salt retrieved:", deviceData.Salt)
-	logger.Info(referenceId, "INFO - Device_Create_Conn - Salted Password:", deviceData.SaltedPassword)
-
-	plainTextPassword, err := crypto.DecryptAES256(deviceData.SaltedPassword, deviceData.Salt, key)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - Device_Create_Conn - Failed to decrypt password: ", err)
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "500001",
-			ErrorMessage: "Internal server error",
-		})
-		return
-	}
-
-	logger.Info(referenceId, "INFO - Device_Create_Conn - device password from request:", devicePassword)
-	logger.Info(referenceId, "INFO - Device_Create_Conn - plaintext password result:", plainTextPassword)
-
-	if plainTextPassword != devicePassword {
-		logger.Warning(referenceId, "WARNING - Device_Create_Conn  - password invalid ")
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "401001",
-			ErrorMessage: "Unauthorize",
-		})
-
-		logger.Debug(referenceId, "DEBUG - Device_Create_Conn - devuce authorized")
-	}
-
-	hub, err := pubsub.GetWebSocketHub(referenceId)
-	if err != nil {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "500003", ErrorMessage: "Internal Server Error"})
-		return
-	}
-
+	// Upgrade ke WebSocket
 	wsConn, err := deviceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		utils.Response(w, utils.ResultFormat{ErrorCode: "500003", ErrorMessage: "Internal Server Error"})
 		return
 	}
 
-	err = hub.AddDeviceToWebSocket(referenceId, wsConn, deviceData.DeviceID, deviceData.DeviceName)
+	// Tambahkan ke hub
+	hub, err := pubsub.GetWebSocketHub(referenceId)
 	if err != nil {
+		wsConn.Close()
+		utils.Response(w, utils.ResultFormat{ErrorCode: "500003", ErrorMessage: "Internal Server Error"})
+		return
+	}
+	if err := hub.AddDeviceToWebSocket(referenceId, wsConn, deviceData.DeviceID, deviceData.DeviceName); err != nil {
+		wsConn.Close()
 		utils.Response(w, utils.ResultFormat{ErrorCode: "500004", ErrorMessage: "Internal Server Error"})
 		return
 	}
 
-	// Update status device sebagai "Connected"
-	tx, err := conn.Beginx()
-	if err != nil {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "500005", ErrorMessage: "Internal Server Error"})
-		return
-	}
+	// Perbarui status di DB: connected
+	tx, _ := conn.Beginx()
+	tx.Exec(`UPDATE device.unit SET st = 1 WHERE id = $1`, deviceData.DeviceID)
+	tx.Exec(`INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, 'connect')`, deviceData.DeviceID)
+	tx.Commit()
 
-	_, err = tx.Exec(`UPDATE device.unit SET st = 1 WHERE id = $1`, deviceData.DeviceID)
-	if err == nil {
-		_, err = tx.Exec(`INSERT INTO device.device_activity (unit_id, activity) VALUES ($1, 'connect')`, deviceData.DeviceID)
-	}
+	lastPing := time.Now()
+	missedPings := 0
+	pingTicker := time.NewTicker(5 * time.Second)
+	done := make(chan struct{})
 
-	if err != nil || tx.Commit() != nil {
-		utils.Response(w, utils.ResultFormat{ErrorCode: "500006", ErrorMessage: "Internal Server Error"})
-		return
-	}
-
-	// **Handle disconnect secara eksplisit**
-	defer func() {
-		handleDeviceDisconnect(referenceId, conn, hub, wsConn, deviceData.DeviceID)
+	// Goroutine untuk cek timeout ping
+	go func() {
+		defer pingTicker.Stop()
+		for {
+			select {
+			case <-pingTicker.C:
+				if time.Since(lastPing) > 5*time.Second {
+					missedPings++
+					logger.Warning(referenceId,
+						fmt.Sprintf("WARN - Missed ping #%d for device %d", missedPings, deviceData.DeviceID))
+				} else {
+					missedPings = 0
+				}
+				if missedPings >= 3 {
+					logger.Error(referenceId,
+						fmt.Sprintf("ERROR - No ping for 3 intervals, disconnecting device %d", deviceData.DeviceID))
+					handleDeviceDisconnect(referenceId, conn, hub, wsConn, deviceData.DeviceID)
+					return // Cukup keluar goroutine
+				}
+			case <-done:
+				return
+			}
+		}
 	}()
 
-	// **Loop untuk membaca pesan WebSocket**
+	// Loop utama membaca pesan WebSocket
 	for {
 		messageType, message, err := wsConn.ReadMessage()
 		if err != nil {
-			logger.Warning(referenceId, "WARN - Device_Create_Conn - WebSocket disconnected:", err)
+			logger.Warning(referenceId, "WARN - WebSocket disconnected:", err)
 			break
 		}
-
 		if messageType != websocket.TextMessage {
 			continue
 		}
 
-		if !validateDeviceData(referenceId, message) {
+		// Decode JSON
+		var msg map[string]any
+		if err := json.Unmarshal(message, &msg); err != nil {
+			logger.Error(referenceId, "ERROR - Invalid JSON:", err)
 			continue
 		}
 
-		// msgString, err := addDeviceIdField(referenceId, message, deviceData.DeviceID)
-		// if err != nil {
-		// 	continue
-		// }
-
-		msgString := string(message)
-
-		err = pubsub.PushDataToBuffer(context.Background(), msgString, referenceId)
-		if err == nil {
-			err = hub.DevicePublishToChannel(referenceId, deviceData.DeviceID, msgString)
+		// Ambil field "type" dengan aman
+		rawT, exists := msg["type"]
+		if !exists {
+			logger.Warning(referenceId, "WARN - Missing 'type' field, skipping message")
+			continue
+		}
+		t, ok := rawT.(string)
+		if !ok {
+			logger.Warning(referenceId, "WARN - 'type' is not string, skipping message")
+			continue
 		}
 
-		if err != nil {
-			logger.Error(referenceId, "ERROR - Failed to process WebSocket message:", err)
+		// Tangani sesuai tipe
+		switch t {
+		case "ping":
+			lastPing = time.Now()
+			logger.Debug(referenceId, "DEBUG - Received ping from device:", deviceData.DeviceID)
+
+		case "sensor_data":
+			if !validateDeviceData(referenceId, message) {
+				continue
+			}
+			msgString := string(message)
+			if err := pubsub.PushDataToBuffer(context.Background(), msgString, referenceId); err == nil {
+				hub.DevicePublishToChannel(referenceId, deviceData.DeviceID, msgString)
+			}
+
+		default:
+			logger.Warning(referenceId, "WARNING - Unknown message type:", t)
 		}
 	}
+	// Bersihkan ticker & disconnect
+
+	close(done)
+	handleDeviceDisconnect(referenceId, conn, hub, wsConn, deviceData.DeviceID)
 }
 
 // **Fungsi untuk menangani disconnect dengan aman**
@@ -255,28 +266,6 @@ func handleDeviceDisconnect(referenceId string, conn *sqlx.DB, hub *pubsub.WebSo
 	logger.Info(referenceId, "INFO - handleDeviceDisconnect - Device successfully disconnected:", deviceID)
 }
 
-/* func addDeviceIdField(referenceId string, message []byte, deviceID int64) (string, error) {
-	// Decode JSON
-	var messageData map[string]any
-	err := json.Unmarshal(message, &messageData)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - addDeviceIdField - Invalid JSON format:", err)
-		return "", err
-	}
-
-	// Tambahkan Device_ID ke data
-	messageData["Device_Id"] = deviceID
-
-	// Encode kembali ke JSON string
-	msgBytes, err := json.Marshal(messageData)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - addDeviceIdField - Failed to encode JSON:", err)
-		return "", err
-	}
-
-	return string(msgBytes), nil
-} */
-
 func validateDeviceData(referenceId string, data []byte) bool {
 	// Decode JSON dari []byte ke map[string]interface{}
 	var jsonData map[string]any
@@ -288,7 +277,7 @@ func validateDeviceData(referenceId string, data []byte) bool {
 	}
 
 	// Daftar field yang wajib ada
-	requiredFields := []string{"unit_id", "tstamp", "voltage", "current", "power", "energy", "frequency", "power_factor"}
+	requiredFields := []string{"unit_id", "timestamp", "voltage", "current", "power", "energy", "frequency", "power_factor"}
 
 	// Periksa apakah setiap field yang diperlukan ada dalam data
 	for _, field := range requiredFields {

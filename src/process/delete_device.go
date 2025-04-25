@@ -8,7 +8,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-func Delete_Device(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+func Delete_Device(referenceId string, conn *sqlx.DB, userId int64, role string, param map[string]any) utils.ResultFormat {
 
 	result := utils.ResultFormat{
 		ErrorCode:    "000000",

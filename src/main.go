@@ -17,6 +17,8 @@ import (
 	"monitoring_service/pubsub"
 	"monitoring_service/utils"
 	"monitoring_service/worker"
+
+	"github.com/jmoiron/sqlx"
 )
 
 func generateReferenceID(timer int64) string {
@@ -75,7 +77,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // runWorker menjalankan worker dengan interval tertentu dan menangani graceful shutdown
-func runWorker(interval time.Duration, redisMemoryLimit int64) chan struct{} {
+func runWorker(interval time.Duration, redisMemoryLimit int64, dbConn *sqlx.DB) chan struct{} {
 	logger.Info("MAIN", "RUNNING WORKER")
 	stopChan := make(chan struct{})
 	var wg sync.WaitGroup // WaitGroup untuk menunggu worker selesai
@@ -83,7 +85,7 @@ func runWorker(interval time.Duration, redisMemoryLimit int64) chan struct{} {
 	wg.Add(1) // Tambah counter WaitGroup
 	go func() {
 		defer wg.Done() // Pastikan WaitGroup berkurang saat worker selesai
-		worker.StartRedisToDBWorker(interval, redisMemoryLimit, stopChan)
+		worker.StartRedisToDBWorker(interval, redisMemoryLimit, stopChan, dbConn)
 	}()
 
 	// Menangani sinyal sistem untuk shutdown yang aman
@@ -224,7 +226,14 @@ func main() {
 	logger.Info("MAIN", "WORKER INTERVAL (s):  : ", workerInterval)
 	logger.Info("MAIN", "REDIS MEMORY LIMIT (MB):  : ", redisMemoryMB)
 
-	runWorker(time.Duration(workerInterval)*time.Second, redisMemoryLimit)
+	// Initialize the DB connection pool once at the start of the program for worker
+	dbConnWorker, err := db.GetConnection()
+	if err != nil {
+		logger.Error("MAIN", "ERROR initializing DB connection:", err)
+		os.Exit(1)
+	}
+
+	runWorker(time.Duration(workerInterval)*time.Second, redisMemoryLimit, dbConnWorker)
 
 	//////////////////////////////// ////////////////////////////////
 
