@@ -53,6 +53,9 @@ func Get_User_List(referenceId string, conn *sqlx.DB, userID int64, role string,
 		filterClause := fmt.Sprintf(" AND (full_name ILIKE '%%%s%%' OR data::text ILIKE '%%%s%%')", filter, filter)
 		baseQuery += filterClause
 		countQuery += filterClause
+	} else {
+
+		logger.Info(referenceId, "INFO - No filter applied")
 	}
 
 	if st, ok := param["st"].(float64); ok {

@@ -29,11 +29,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"monitoring_service/configs"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
 	"monitoring_service/logger"
 	pubsub "monitoring_service/pubsub"
 	"monitoring_service/utils"
+
 	"net/http"
 	"os"
 
@@ -144,7 +146,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 	lastPing := time.Now()
 	missedPings := 0
-	pingTicker := time.NewTicker(5 * time.Second)
+	pingTicker := time.NewTicker(time.Duration(configs.GetDeviceWsPingInterval()) * time.Second)
 	done := make(chan struct{})
 
 	// Goroutine untuk cek timeout ping
