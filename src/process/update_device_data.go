@@ -327,6 +327,45 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		return result
 	}
 
+	//immadiate device update
+
+	/* err = wsHub.SendMessageToDevice(referenceId,  deviceId, `{"type" : "update"}`)
+	if err != nil {
+		// Tangani error jika perangkat tidak ditemukan
+		logger.Error("Failed to send message to device:", err)
+	} */
+
+	logger.Debug(referenceId, "DEBUG - Update_Device_Data - Sending message to device:", deviceIdInt)
+
+	if deviceSt == 1 {
+		hub, err := pubsub.GetWebSocketHub(referenceId)
+		if err != nil {
+			logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to get WebSocketHub:", err)
+			result.ErrorCode = "500006"
+			result.ErrorMessage = "Internal server error"
+			return result
+		}
+
+		err = hub.SetDeviceAction(referenceId, deviceIdInt, "update")
+		if err != nil {
+			// Tangani error jika perangkat tidak ditemukan
+			logger.Error(referenceId, "Failed to set device action:", err)
+
+			err = tx.Rollback()
+			if err != nil {
+				logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to rollback transaction:", err)
+			}
+
+			logger.Debug(referenceId, "DEBUG - Update_Device_Data - Rollback transaction")
+
+			result.ErrorCode = "500006"
+			result.ErrorMessage = "Internal server error"
+			return result
+		}
+
+		logger.Debug(referenceId, "DEBUG - Update_Device_Data - Device action set to update for device ID:", deviceIdInt)
+	}
+
 	// Commit transaction
 	err = tx.Commit()
 	if err != nil {

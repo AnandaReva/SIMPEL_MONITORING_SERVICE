@@ -38,12 +38,21 @@ type WebSocketHub struct {
 	redis        *redis.Client
 }
 
+// type DeviceClient struct {
+// 	DeviceID         int64
+// 	DeviceName       string
+// 	Conn             *websocket.Conn
+// 	ChannelToPublish string
+// 	PubSub           *redis.PubSub
+// }
+
 type DeviceClient struct {
 	DeviceID         int64
 	DeviceName       string
 	Conn             *websocket.Conn
 	ChannelToPublish string
 	PubSub           *redis.PubSub
+	Action  		 string
 }
 
 type UserClient struct {
@@ -62,6 +71,9 @@ var (
 	wsHub       *WebSocketHub
 	wsHubOnce   sync.Once
 )
+
+
+
 
 func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
 	var newErr error

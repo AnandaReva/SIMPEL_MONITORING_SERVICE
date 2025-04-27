@@ -33,6 +33,7 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 		DeviceName:       deviceName,
 		Conn:             conn,
 		ChannelToPublish: fmt.Sprintf("device:%d", deviceID),
+		Action:           "",
 	}
 
 	hub.Devices[conn] = device
@@ -188,4 +189,45 @@ func (hub *WebSocketHub) SendMessageToDevice(referenceId string, deviceID int64,
 
 	logger.Info(referenceId, fmt.Sprintf("INFO - SendMessageToDevice - Successfully sent data to device %d", deviceID))
 	return nil
+}
+
+// GetDeviceAction retrieves the action of a device based on its DeviceID.
+func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (string, error) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+
+	logger.Debug(referenceId, fmt.Sprintf("DEBUG - GetDeviceAction - Device ID: %d", deviceID))
+
+	// Check if the device is connected
+	if _, exists := hub.DeviceConn[deviceID]; exists {
+		// Iterate through Devices map to find the DeviceClient associated with the connection
+		for _, client := range hub.Devices {
+			if client.DeviceID == deviceID {
+
+				return client.Action, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("device with ID %d not found", deviceID)
+}
+
+// SetDeviceAction sets the action of a device based on its DeviceID.
+func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceID int64, action string) error {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+
+	logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - Device ID: %d, Action: %s", deviceID, action))
+
+	// Check if the device is connected
+	if _, exists := hub.DeviceConn[deviceID]; exists {
+		// Iterate through Devices map to find the DeviceClient associated with the connection
+		for _, client := range hub.Devices {
+			if client.DeviceID == deviceID {
+				// Update the action of the device
+				client.Action = action
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("device with ID %d not found", deviceID)
 }

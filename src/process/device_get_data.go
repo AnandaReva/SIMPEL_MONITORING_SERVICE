@@ -3,6 +3,7 @@ package process
 import (
 	"fmt"
 	"monitoring_service/logger"
+	"time"
 
 	"monitoring_service/utils"
 
@@ -33,8 +34,40 @@ Referenced by:
     TABLE "device.device_activity" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 */
 
+/* Proses Menjaga Integritas Data Energy Reset
+Pengecekan Bulan dan Tahun
+
+Setiap kali data baru akan diproses, sistem membandingkan bulan dan tahun dari timestamp data sensor terakhir dengan waktu saat ini.
+
+Jika bulan atau tahun berubah, maka sistem mereset nilai energy menjadi 0 untuk menghindari akumulasi energi lintas bulan yang tidak valid.
+
+Pengaturan Flag ResetEnergy
+
+Flag ResetEnergy digunakan untuk menandai apakah nilai energy saat ini adalah hasil reset atau melanjutkan dari bulan sebelumnya.
+
+Ini penting agar proses perhitungan lanjutan (misal akumulasi energi bulanan) bisa mempertimbangkan konteks reset dengan benar.
+
+Penanganan Kondisi Tanpa Data Sebelumnya
+
+Jika tidak ditemukan data sensor sebelumnya untuk suatu perangkat (contoh: perangkat baru, atau data dihapus), maka sistem menganggap data pertama adalah awal bulan dan otomatis melakukan reset energy ke 0.
+
+Penggunaan Timestamp dan Energy Terakhir
+
+Data timestamp dan energy terakhir selalu digunakan sebagai referensi konsistensi supaya tidak terjadi mismatch antara bulan data sensor dengan bulan operasional sistem.
+
+Audit Trail dan Logging
+
+Semua proses keputusan (reset atau tidak) dicatat melalui logger.
+
+Ini penting untuk audit trail jika ada keperluan menelusuri mengapa nilai energy direset atau tidak pada bulan tertentu.
+
+Menghindari Double-Reset
+
+Dengan mengecek hanya perubahan bulan, sistem menghindari kasus reset berkali-kali dalam satu bulan, walaupun perangkat sering restart atau kirim data dengan jeda panjang. */
+
 type DeviceDataInfo struct {
-	DeviceReadInterval int16 `db:"read_interval" json:"device_read_interval"`
+	DeviceReadInterval   int16   `db:"read_interval" json:"device_read_interval"`
+	DeviceLastEnergyData float64 `json:"device_last_energy_data"`
 }
 
 func Device_Get_Data(referenceId string, conn *sqlx.DB, deviceId int64, param map[string]any) utils.ResultFormat {
@@ -61,11 +94,49 @@ func Device_Get_Data(referenceId string, conn *sqlx.DB, deviceId int64, param ma
 	}
 	logger.Debug(referenceId, "DEBUG - Device_Get_Data - Device data retrieved:", fmt.Sprintf("Device ID: %d , Device Read Interval: %d", deviceId, deviceData.DeviceReadInterval))
 
-	result.Payload["status"] = "success"
-	result.Payload["device_data"] = map[string]any{
-		"device_id":            deviceId,
-		"device_read_interval": deviceData.DeviceReadInterval,
-	}
-	return result
+	// Cek data sensor terakhir
+	var lastTimestamp time.Time
+	var lastEnergy float64
 
+	queryLastSensorData := `
+		SELECT timestamp, energy 
+		FROM device.data 
+		WHERE unit_id = $1
+		ORDER BY timestamp DESC 
+		LIMIT 1
+	`
+	err = conn.QueryRow(queryLastSensorData, deviceId).Scan(
+		&lastTimestamp,
+		&lastEnergy,
+	)
+
+	if err != nil {
+		// Kalau tidak ada data sensor sebelumnya, anggap reset
+		deviceData.DeviceLastEnergyData = 0
+		logger.Warning(referenceId, "WARN - Device_Get_Data - No previous sensor data found, energy reset to 0")
+	} else {
+		// Bandingkan bulan & tahun
+		now := time.Now()
+
+		if lastTimestamp.Month() != now.Month() || lastTimestamp.Year() != now.Year() {
+			// Bulan atau Tahun berbeda, reset energy
+			deviceData.DeviceLastEnergyData = 0
+			logger.Info(referenceId, "INFO - Device_Get_Data - Month changed, reset energy to 0")
+		} else {
+			// Bulan sama, lanjutkan energy terakhir
+			deviceData.DeviceLastEnergyData = lastEnergy
+			logger.Info(referenceId, "INFO - Device_Get_Data - Same month, continue energy")
+		}
+	}
+
+	// Menambahkan data ke payload
+	result.Payload["device_data"] = map[string]any{
+		"device_id":               deviceId,
+		"device_read_interval":    deviceData.DeviceReadInterval,
+		"device_last_energy_data": deviceData.DeviceLastEnergyData, // Energy data yang benar
+	}
+
+	result.Payload["status"] = "success"
+
+	return result
 }

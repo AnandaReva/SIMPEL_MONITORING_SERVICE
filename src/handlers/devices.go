@@ -59,6 +59,24 @@ type DeviceClientData struct {
 	SaltedPassword string `db:"salted_password"`
 }
 
+var ActionAvailable = map[string]bool{
+	"update":     true,
+	"deep_sleep": true,
+	"restart":    true,
+}
+
+/*
+reference :
+package pubsub
+type DeviceClient struct {
+	DeviceID         int64
+	DeviceName       string
+	Conn             *websocket.Conn
+	ChannelToPublish string
+	PubSub           *redis.PubSub
+	Action  		 string
+} */
+
 func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	// Ambil referenceId dari context
 	var ctxKey HTTPContextKey = "requestID"
@@ -69,6 +87,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	defer func() {
 		logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Execution completed in:", time.Since(startTime))
+		db.ReleaseConnection()
 	}()
 
 	// Validasi query params
@@ -121,6 +140,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	// Upgrade ke WebSocket
 	wsConn, err := deviceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
+		logger.Error(referenceId, "ERROR - Device_Create_Conn - Failed to upgrade connection:", err)
 		utils.Response(w, utils.ResultFormat{ErrorCode: "500003", ErrorMessage: "Internal Server Error"})
 		return
 	}
@@ -158,13 +178,13 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 				if time.Since(lastPing) > 5*time.Second {
 					missedPings++
 					logger.Warning(referenceId,
-						fmt.Sprintf("WARN - Missed ping #%d for device %d", missedPings, deviceData.DeviceID))
+						fmt.Sprintf("WARN - Device_Create_Conn - Missed ping #%d for device %d", missedPings, deviceData.DeviceID))
 				} else {
 					missedPings = 0
 				}
 				if missedPings >= 3 {
 					logger.Error(referenceId,
-						fmt.Sprintf("ERROR - No ping for 3 intervals, disconnecting device %d", deviceData.DeviceID))
+						fmt.Sprintf("ERROR - Device_Create_Conn - No ping for 3 intervals, disconnecting device %d", deviceData.DeviceID))
 					handleDeviceDisconnect(referenceId, conn, hub, wsConn, deviceData.DeviceID)
 					return // Cukup keluar goroutine
 				}
@@ -174,33 +194,87 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	var messageToDevice string
+	var currAction string
+
 	// Loop utama membaca pesan WebSocket
 	for {
-		messageType, message, err := wsConn.ReadMessage()
+
+		///////////// CHECK ACTOIN //////////////
+		currAction, err = hub.GetDeviceAction(referenceId, deviceData.DeviceID)
 		if err != nil {
-			logger.Warning(referenceId, "WARN - WebSocket disconnected:", err)
+			logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to get device action: %v", err))
+			continue
+		}
+
+		logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Current action for device:", currAction)
+
+		// Periksa apakah currAction ada dalam map actionAvailable
+		if ActionAvailable[currAction] {
+			// Lanjutkan pengiriman pesan
+			messageMap := map[string]string{
+				"type": currAction,
+			}
+			messageToDeviceBytes, err := json.Marshal(messageMap)
+			if err != nil {
+				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to marshal message: %v", err))
+				continue
+			}
+			messageToDevice = string(messageToDeviceBytes)
+
+			// Marshal the message to JSON
+			msgJSON, err := json.Marshal(messageToDevice)
+			if err != nil {
+				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to marshal message: %v", err))
+				continue
+			}
+
+			// Send the message to the device via WebSocket
+			if err := wsConn.WriteMessage(websocket.TextMessage, msgJSON); err != nil {
+				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to send WebSocket message: %v", err))
+				return
+			}
+
+			logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Sent message to device:", string(msgJSON))
+			err = hub.SetDeviceAction(referenceId, deviceData.DeviceID, "")
+			if err != nil {
+				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to get device action: %v", err))
+				return
+			}
+
+		} else {
+			// Jika currAction tidak ada dalam actionAvailable
+			logger.Warning(referenceId, fmt.Sprintf("WARNING - Action %s not available for device %d", currAction, deviceData.DeviceID))
+		}
+
+		//////////// CHECK MESSAGE FROM DEVICE ////////////
+		messageType, messageFromDevice, err := wsConn.ReadMessage()
+
+		if err != nil {
+			logger.Warning(referenceId, "WARN - Device_Create_Conn - WebSocket disconnected:", err)
 			break
 		}
+
 		if messageType != websocket.TextMessage {
 			continue
 		}
 
 		// Decode JSON
 		var msg map[string]any
-		if err := json.Unmarshal(message, &msg); err != nil {
-			logger.Error(referenceId, "ERROR - Invalid JSON:", err)
+		if err := json.Unmarshal(messageFromDevice, &msg); err != nil {
+			logger.Error(referenceId, "ERROR - Device_Create_Conn - Invalid JSON:", err)
 			continue
 		}
 
 		// Ambil field "type" dengan aman
 		rawT, exists := msg["type"]
 		if !exists {
-			logger.Warning(referenceId, "WARN - Missing 'type' field, skipping message")
+			logger.Warning(referenceId, "WARN - Device_Create_Conn - Missing 'type' field, skipping message")
 			continue
 		}
 		t, ok := rawT.(string)
 		if !ok {
-			logger.Warning(referenceId, "WARN - 'type' is not string, skipping message")
+			logger.Warning(referenceId, "WARN - Device_Create_Conn - 'type' is not string, skipping message")
 			continue
 		}
 
@@ -208,19 +282,19 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		switch t {
 		case "ping":
 			lastPing = time.Now()
-			logger.Debug(referenceId, "DEBUG - Received ping from device:", deviceData.DeviceID)
+			logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Received ping from device:", deviceData.DeviceID)
 
 		case "sensor_data":
-			if !validateDeviceData(referenceId, message) {
+			if !validateDeviceData(referenceId, messageFromDevice) {
 				continue
 			}
-			msgString := string(message)
+			msgString := string(messageFromDevice)
 			if err := pubsub.PushDataToBuffer(context.Background(), msgString, referenceId); err == nil {
 				hub.DevicePublishToChannel(referenceId, deviceData.DeviceID, msgString)
 			}
 
 		default:
-			logger.Warning(referenceId, "WARNING - Unknown message type:", t)
+			logger.Warning(referenceId, "WARNING - Device_Create_Conn - Unknown message type:", t)
 		}
 	}
 	// Bersihkan ticker & disconnect
@@ -231,11 +305,11 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 
 // **Fungsi untuk menangani disconnect dengan aman**
 func handleDeviceDisconnect(referenceId string, conn *sqlx.DB, hub *pubsub.WebSocketHub, wsConn *websocket.Conn, deviceID int64) {
-	logger.Info(referenceId, "INFO - handleDeviceDisconnect - Device disconnecting:", deviceID)
+	logger.Info(referenceId, "INFO - Device_Create_Conn - handleDeviceDisconnect - Device disconnecting:", deviceID)
 
 	tx, err := conn.Beginx()
 	if err != nil {
-		logger.Error(referenceId, "ERROR - handleDeviceDisconnect - Failed to begin transaction:", err)
+		logger.Error(referenceId, "ERROR - Device_Create_Conn - handleDeviceDisconnect - Failed to begin transaction:", err)
 		wsConn.Close()
 		return
 	}
@@ -250,14 +324,14 @@ func handleDeviceDisconnect(referenceId string, conn *sqlx.DB, hub *pubsub.WebSo
 
 	_, err = tx.Exec(`UPDATE device.unit SET st = 0 WHERE id = $1`, deviceID)
 	if err != nil {
-		logger.Error(referenceId, "ERROR - handleDeviceDisconnect - Failed to update device status on disconnect")
+		logger.Error(referenceId, "ERROR - Device_Create_Conn - handleDeviceDisconnect - Failed to update device status on disconnect")
 		tx.Rollback()
 		wsConn.Close()
 		return
 	}
 
 	if err = tx.Commit(); err != nil {
-		logger.Error(referenceId, "ERROR - handleDeviceDisconnect - Failed to commit transaction")
+		logger.Error(referenceId, "ERROR - Device_Create_Conn - handleDeviceDisconnect - Failed to commit transaction")
 		wsConn.Close()
 		return
 	}
@@ -265,7 +339,7 @@ func handleDeviceDisconnect(referenceId string, conn *sqlx.DB, hub *pubsub.WebSo
 	// Hapus device dari WebSocket
 	hub.RemoveDeviceFromWebSocket(referenceId, wsConn)
 	wsConn.Close()
-	logger.Info(referenceId, "INFO - handleDeviceDisconnect - Device successfully disconnected:", deviceID)
+	logger.Info(referenceId, "INFO - Device_Create_Conn - handleDeviceDisconnect - Device successfully disconnected:", deviceID)
 }
 
 func validateDeviceData(referenceId string, data []byte) bool {
@@ -273,7 +347,7 @@ func validateDeviceData(referenceId string, data []byte) bool {
 	var jsonData map[string]any
 	err := json.Unmarshal(data, &jsonData)
 	if err != nil {
-		logStr := fmt.Sprintf("Invalid JSON format: %s, Message: %s", err, string(data))
+		logStr := fmt.Sprintf("ERROR - Device_Create_Conn - Invalid JSON format: %s, Message: %s", err, string(data))
 		logger.Error(referenceId, logStr)
 		return false
 	}
@@ -284,7 +358,7 @@ func validateDeviceData(referenceId string, data []byte) bool {
 	// Periksa apakah setiap field yang diperlukan ada dalam data
 	for _, field := range requiredFields {
 		if _, exists := jsonData[field]; !exists {
-			logger.Error(referenceId, "ERROR - validateDeviceData - Data not valid: missing fields : ", field)
+			logger.Error(referenceId, "ERROR - Device_Create_Conn - validateDeviceData - Data not valid: missing fields : ", field)
 			return false
 		}
 	}
