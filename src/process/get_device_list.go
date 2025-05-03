@@ -62,7 +62,7 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 		Payload:      make(map[string]any),
 	}
 
-	logger.Info(referenceId, "INFO - Get_Device_List param: ", param)
+	//logger.Info(referenceId, "INFO - Get_Device_List param: ", param)
 
 	// Validasi parameter pagination
 	pageSize, ok := param["page_size"].(float64)
@@ -91,7 +91,7 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 
 	// Filter untuk search dengan LIKE query (case-insensitive)
 	if filter, ok := param["filter"].(string); ok && filter != "" {
-		logger.Info(referenceId, fmt.Sprintf("INFO - Applying Filter: %v", filter))
+		//logger.Info(referenceId, fmt.Sprintf("INFO - Applying Filter: %v", filter))
 		filterClause := fmt.Sprintf(" AND (name ILIKE '%%%s%%' OR data::text ILIKE '%%%s%%')", filter, filter)
 		baseQuery += filterClause
 		countQuery += filterClause
@@ -109,7 +109,7 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Hitung total data setelah filter diterapkan
 	err := conn.Get(&totalData, countQuery)
 	if err != nil {
-		logger.Error(referenceId, "ERROR - Get_Device_List - Failed to get total data: ", err)
+		//logger.Error(referenceId, "ERROR - Get_Device_List - Failed to get total data: ", err)
 		result.ErrorCode = "500002"
 		result.ErrorMessage = "Internal server error"
 		return result
@@ -128,20 +128,20 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 
 	// Query utama dengan pagination
 	finalQuery := fmt.Sprintf("%s ORDER BY %s %s LIMIT %d OFFSET %d;", baseQuery, orderBy, sortType, int(pageSize), offset)
-	logger.Info(referenceId, "INFO - Get_Device_List - Final Query: ", finalQuery)
+	//logger.Info(referenceId, "INFO - Get_Device_List - Final Query: ", finalQuery)
 
 	err = conn.Select(&devices, finalQuery)
 	if err != nil {
-		logger.Error(referenceId, "ERROR - Query Execution Failed: ", err)
+		//logger.Error(referenceId, "ERROR - Query Execution Failed: ", err)
 		result.ErrorCode = "500003"
 		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
 	totalPage := (totalData + int(pageSize) - 1) / int(pageSize)
-	logger.Info(referenceId, "INFO - Get_Device_List total data : ", totalData)
-	logger.Info(referenceId, "INFO - Get_Device_List total page : ", totalPage)
-	logger.Info(referenceId, "INFO - Get_Device_List devices : ", devices)
+	// //logger.Info(referenceId, "INFO - Get_Device_List total data : ", totalData)
+	// //logger.Info(referenceId, "INFO - Get_Device_List total page : ", totalPage)
+	// //logger.Info(referenceId, "INFO - Get_Device_List devices : ", devices)
 
 	// Hitung total halaman berdasarkan total data yang sudah difilter
 
@@ -149,6 +149,6 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 	result.Payload["total_data"] = totalData
 	result.Payload["total_page"] = totalPage
 	result.Payload["status"] = "success"
-	logger.Info(referenceId, "INFO - Get_Device_List completed successfully")
+	//logger.Info(referenceId, "INFO - Get_Device_List completed successfully")
 	return result
 }

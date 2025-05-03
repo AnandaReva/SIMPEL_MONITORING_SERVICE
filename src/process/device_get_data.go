@@ -111,7 +111,7 @@ func Device_Get_Data(referenceId string, conn *sqlx.DB, deviceId int64, param ma
 	)
 
 	if err != nil {
-		// Kalau tidak ada data sensor sebelumnya, anggap reset
+		// JIka tidak ada data sensor sebelumnya, anggap reset
 		deviceData.DeviceLastEnergyData = 0
 		logger.Warning(referenceId, "WARN - Device_Get_Data - No previous sensor data found, energy reset to 0")
 	} else {

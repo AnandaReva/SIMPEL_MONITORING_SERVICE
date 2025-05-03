@@ -21,7 +21,7 @@ import (
 
 
 	each device can only publish to one channel at a time
-	each user can subscribe to multiple channel at a time
+	each user can only subscribe to one channel at a time
 
 	Server Tidak Perlu Looping ke Subscribers – Redis menangani distribusi pesan.
 */
@@ -29,14 +29,15 @@ import (
 // WebSocketHub menyimpan koneksi WebSocket dan integrasi Redis
 
 type WebSocketHub struct {
-	Mu           sync.Mutex
+	mu           sync.Mutex
 	Devices      map[*websocket.Conn]*DeviceClient
 	Users        map[*websocket.Conn]*UserClient
 	UserConn     map[int64]*websocket.Conn
 	DeviceConn   map[int64]*websocket.Conn
-	ChannelUsers map[string]map[*websocket.Conn]bool // <- GANTI jadi map[*websocket.Conn]bool
+	ChannelUsers map[string][]*websocket.Conn // Mapping channel ke daftar koneksi user
 	redis        *redis.Client
 }
+
 
 type DeviceClient struct {
 	DeviceID         int64
@@ -44,18 +45,17 @@ type DeviceClient struct {
 	Conn             *websocket.Conn
 	ChannelToPublish string
 	PubSub           *redis.PubSub
-	Action           string
+	Action  		 string
 }
 
 type UserClient struct {
-	UserID             int64
-	Username           string
-	Role               string
-	Conn               *websocket.Conn
-	WriteMutex         sync.Mutex
-	ChannelsSubscribed map[string]bool
-	PubSubs            map[string]*redis.PubSub
-	PubSubCancels      map[string]context.CancelFunc
+	UserID            int64
+	Username          string
+	Role              string
+	Conn              *websocket.Conn
+	ChannelSubscribed string
+	PubSub            *redis.PubSub
+	PubSubCancel      context.CancelFunc
 }
 
 var (
@@ -64,6 +64,9 @@ var (
 	wsHub       *WebSocketHub
 	wsHubOnce   sync.Once
 )
+
+
+
 
 func GetWebSocketHub(referenceId string) (*WebSocketHub, error) {
 	var newErr error
@@ -105,7 +108,7 @@ func NewWebSocketHub(referenceId string) (*WebSocketHub, error) {
 		Users:        make(map[*websocket.Conn]*UserClient),
 		UserConn:     make(map[int64]*websocket.Conn), // Inisialisasi map
 		DeviceConn:   make(map[int64]*websocket.Conn), // Inisialisasi map
-		ChannelUsers: make(map[string]map[*websocket.Conn]bool),
+		ChannelUsers: make(map[string][]*websocket.Conn),
 		redis:        redisClient,
 	}
 

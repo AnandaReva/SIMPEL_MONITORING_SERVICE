@@ -5,14 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"monitoring_service/logger"
+	"sort"
 
 	"github.com/gorilla/websocket"
 )
 
 // Menambahkan Device Baru
 func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocket.Conn, deviceID int64, deviceName string) error {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	hub.Mu.Lock()
+	defer hub.Mu.Unlock()
 
 	// Pastikan tidak ada koneksi lain yang sedang ditambahkan
 	if _, exists := hub.DeviceConn[deviceID]; exists {
@@ -44,10 +45,10 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 }
 
 func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *websocket.Conn) error {
-	hub.mu.Lock()
+	hub.Mu.Lock()
 	device, exists := hub.Devices[conn]
 	if !exists {
-		hub.mu.Unlock()
+		hub.Mu.Unlock()
 		logger.Warning(referenceId, "WARNING - RemoveDeviceFromWebSocket - Attempted to remove non-existent device")
 		return errors.New("attempted to remove non-existent device")
 	}
@@ -58,7 +59,7 @@ func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *web
 	// Hapus device dari map sebelum menutup koneksi
 	delete(hub.Devices, conn)
 	delete(hub.DeviceConn, device.DeviceID)
-	hub.mu.Unlock()
+	hub.Mu.Unlock()
 
 	// Tutup koneksi WebSocket
 	conn.Close()
@@ -67,55 +68,40 @@ func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *web
 
 	// Jika device memiliki channel, putuskan semua user yang subscribe ke channel itu
 	if channel != "" {
-		hub.DisconnectAllUsersFromDevice(referenceId, device.DeviceID)
+		hub.UnsubscribeAllUsersFromChannel(referenceId, channel)
 	}
 
 	return nil
 }
 
 // DisconnectAllUsersFromDevice menutup semua koneksi user yang terhubung ke device tertentu
-func (hub *WebSocketHub) DisconnectAllUsersFromDevice(referenceId string, deviceID int64) error {
-	channel := fmt.Sprintf("device:%d", deviceID)
-
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
-
-	// Dapatkan semua koneksi user yang subscribe ke channel ini
+func (hub *WebSocketHub) UnsubscribeAllUsersFromChannel(referenceId string, channel string) error {
+	hub.Mu.Lock()
 	userConns, exists := hub.ChannelUsers[channel]
 	if !exists {
-		logger.Warning(referenceId, fmt.Sprintf("WARNING - DisconnectAllUsersFromDevice - No users found for device ID: %d", deviceID))
-		return errors.New("no users found for this device")
+		hub.Mu.Unlock()
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - UnsubscribeAllUsersFromChannel - No users found for channel: %s", channel))
+		return errors.New("no users found for this channel")
 	}
-	logger.Debug(referenceId, fmt.Sprintf("DEBUG - DisconnectAllUsersFromDevice - Found %d users for device ID: %d", len(userConns), deviceID))
+	logger.Debug(referenceId, fmt.Sprintf("DEBUG - UnsubscribeAllUsersFromChannel - Found %d users for channel: %s", len(userConns), channel))
 
-	// Hapus channel dari mapping
-	delete(hub.ChannelUsers, channel)
+	// Buat salinan koneksi yang perlu di-unsubscribe
+	connsToUnsub := make([]*websocket.Conn, 0, len(userConns))
+	for conn := range userConns {
+		connsToUnsub = append(connsToUnsub, conn)
+	}
+	hub.Mu.Unlock()
 
-	// Tutup semua koneksi user yang terkait
-	for _, conn := range userConns {
-		if user, ok := hub.Users[conn]; ok {
-			// Panggil cancel function jika ada
-			if user.PubSubCancel != nil {
-				user.PubSubCancel()
-			}
-
-			// Tutup PubSub Redis
-			if user.PubSub != nil {
-				_ = user.PubSub.Close()
-			}
-
-			// Hapus dari mapping UserConn
-			delete(hub.UserConn, user.UserID)
-
-			// Hapus dari mapping Users
-			delete(hub.Users, conn)
-
-			// Tutup koneksi WebSocket
-			conn.Close()
+	// Unsubscribe user satu per satu
+	for _, conn := range connsToUnsub {
+		if err := hub.UnsubscribeUserFromChannel(referenceId, conn, channel); err != nil {
+			logger.Warning(referenceId, fmt.Sprintf("WARNING - UnsubscribeAllUsersFromChannel - Error unsubscribing user: %v", err))
 		}
 	}
 
-	logger.Info(referenceId, fmt.Sprintf("INFO - DisconnectAllUsersFromDevice - Disconnected %d users from device ID: %d", len(userConns), deviceID))
+	
+
+	logger.Info(referenceId, fmt.Sprintf("INFO - UnsubscribeAllUsersFromChannel - Unsubscribed %d users from channel: %s", len(connsToUnsub), channel))
 	return nil
 }
 
@@ -170,31 +156,10 @@ func PushDataToBuffer(ctx context.Context, data string, referenceId string) erro
 	return nil
 }
 
-func (hub *WebSocketHub) SendMessageToDevice(referenceId string, deviceID int64, message string) error {
-	hub.mu.Lock()
-	conn, exists := hub.DeviceConn[deviceID]
-	hub.mu.Unlock()
-
-	if !exists {
-		logger.Warning(referenceId, fmt.Sprintf("WARNING - SendMessageToDevice - Device ID %d is not connected", deviceID))
-		return errors.New("device is not connected")
-	}
-
-	// Kirim data ke perangkat melalui WebSocket
-	err := conn.WriteMessage(websocket.TextMessage, []byte(message))
-	if err != nil {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - SendMessageToDevice - Failed to send data to device %d: %v", deviceID, err))
-		return err
-	}
-
-	logger.Info(referenceId, fmt.Sprintf("INFO - SendMessageToDevice - Successfully sent data to device %d", deviceID))
-	return nil
-}
-
 // GetDeviceAction retrieves the action of a device based on its DeviceID.
 func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (string, error) {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	hub.Mu.Lock()
+	defer hub.Mu.Unlock()
 
 	logger.Debug(referenceId, fmt.Sprintf("DEBUG - GetDeviceAction - Device ID: %d", deviceID))
 
@@ -213,8 +178,8 @@ func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (st
 
 // SetDeviceAction sets the action of a device based on its DeviceID.
 func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceID int64, action string) error {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	hub.Mu.Lock()
+	defer hub.Mu.Unlock()
 
 	logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - Device ID: %d, Action: %s", deviceID, action))
 
@@ -230,4 +195,37 @@ func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceID int64, act
 		}
 	}
 	return fmt.Errorf("device with ID %d not found", deviceID)
+}
+
+// GetActiveDevices mengembalikan daftar perangkat yang sedang terhubung dengan pagination
+func (hub *WebSocketHub) GetActiveDevices(referenceId string, pageNumber int64, pageSize int64) []*DeviceClient {
+
+	hub.Mu.Lock()
+	defer hub.Mu.Unlock()
+
+	logger.Info(referenceId, fmt.Sprintf("INFO - GetActiveDevices , page_number: %d, page_size: %d", pageNumber, pageSize))
+
+	// Konversi map ke slice
+	devices := make([]*DeviceClient, 0, len(hub.Devices))
+	for _, device := range hub.Devices {
+		devices = append(devices, device)
+	}
+
+	// Sorting berdasarkan DeviceID agar konsisten
+	sort.Slice(devices, func(i, j int) bool {
+		return devices[i].DeviceID < devices[j].DeviceID
+	})
+
+	// Pagination menggunakan offset seperti SQL
+	offset := (pageNumber - 1) * pageSize
+	if offset >= int64(len(devices)) {
+		return []*DeviceClient{} // Jika offset melebihi jumlah data
+	}
+
+	endIndex := offset + pageSize
+	if endIndex > int64(len(devices)) {
+		endIndex = int64(len(devices))
+	}
+
+	return devices[offset:endIndex]
 }

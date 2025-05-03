@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"monitoring_service/crypto"
 	"monitoring_service/db"
@@ -9,7 +10,6 @@ import (
 	"monitoring_service/pubsub"
 	"monitoring_service/utils"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,9 +31,9 @@ simple=> select * from sysuser.session;
 (3 rows)
 */
 
-// Token = HMAC-SHA256((session_id + device_id), session_hash)
+// Token = HMAC-SHA256((session_id + session_hash), session_hash)
 
-//exp param : ws://localhost:5001/user-connect?token={token}&session_id={session_id}&device_id={device_id}
+//exp param : ws://localhost:5001/user-connect?clientToken={clientToken}&session_id={session_id}
 
 var userUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -58,12 +58,10 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		logger.Debug(referenceId, "DEBUG - Users_Create_Conn - Execution completed in:", duration)
 	}()
 
-	// Ambil token, session_id dan device_id dari query parameter
-	token := r.URL.Query().Get("token")
+	// Ambil parameter
+	clientToken := r.URL.Query().Get("token")
 	sessionID := r.URL.Query().Get("session_id")
-	deviceID := r.URL.Query().Get("device_id")
-
-	if token == "" || sessionID == "" || deviceID == "" {
+	if clientToken == "" || sessionID == "" {
 		logger.Error(referenceId, "WARN - Users_Create_Conn - Missing required parameters")
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "400001",
@@ -71,23 +69,9 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	logger.Info(referenceId, "Users_Create_Conn - clientToken: ", clientToken)
+	logger.Info(referenceId, "Users_Create_Conn - session_id: ", sessionID)
 
-	logger.Info(referenceId, "token", token)
-	logger.Info(referenceId, "session_id", sessionID)
-	logger.Info(referenceId, "device_id", deviceID)
-
-	// Tambah user ke hub
-	deviceIDInt, err := strconv.ParseInt(deviceID, 10, 64)
-	if err != nil {
-		logger.Error(referenceId, "ERROR - Users_Create_Conn - Invalid deviceID:", err)
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400002",
-			ErrorMessage: "Invalid deviceID",
-		})
-		return
-	}
-
-	// Mendapatkan koneksi database
 	conn, err := db.GetConnection()
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Device_Create_Conn - Failed to get database connection:", err)
@@ -99,14 +83,14 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.ReleaseConnection()
 
-	// Ambil session_hash dari database
-	var sessionHash string
+	//logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Failed to get database connection:", err)
 
+	var sessionHash string
 	var userData UserClientData
 	errQuery1 := conn.QueryRow("SELECT session_hash, user_id FROM sysuser.session WHERE session_id = $1", sessionID).Scan(&sessionHash, &userData.UserID)
 	if errQuery1 != nil {
 		if errQuery1 == sql.ErrNoRows {
-			logger.Error(referenceId, "WARN - Users_Create_Conn - Session not found: ", errQuery1)
+			logger.Warning(referenceId, "WARN - Users_Create_Conn - Session not found: ", errQuery1)
 			utils.Response(w, utils.ResultFormat{
 				ErrorCode:    "401001",
 				ErrorMessage: "Unauthorized",
@@ -120,14 +104,11 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	logStr := fmt.Sprintf("session_hash: %s, user_id: %d", sessionHash, userData.UserID)
+	logger.Info(referenceId, "INFO - Users_Create_Conn - user data found : ", fmt.Sprintf("session_hash: %s, user_id: %d", sessionHash, userData.UserID))
 
-	logger.Info(referenceId, "INFO - Users_Create_Conn - user data found : ", logStr)
-
-	// Susun token yang harus diverifikasi
-	generatedToken, errHmac := crypto.GenerateHMAC(sessionID+deviceID, sessionHash)
-	logger.Info(referenceId, "generatedToken: ", generatedToken)
-
+	// Generate clientToken untuk validasi
+	message := fmt.Sprintf(sessionID + sessionHash)
+	generatedToken, errHmac := crypto.GenerateHMAC(message, sessionHash)
 	if errHmac != nil {
 		logger.Error(referenceId, "WARN - Users_Create_Conn - error generating HMAC: ", errHmac)
 		utils.Response(w, utils.ResultFormat{
@@ -135,12 +116,13 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			ErrorMessage: "Internal Server Error",
 		})
 		return
-
 	}
 
-	// Verifikasi token
-	if generatedToken != token {
-		logger.Error(referenceId, "WARN - Users_Create_Conn - Invalid token")
+	logger.Debug(referenceId, "DEBUG - Users_Create_Conn - Generated Token: ", generatedToken)
+	logger.Debug(referenceId, "DEBUG - Users_Create_Conn - Client Token: ", clientToken)
+
+	if generatedToken != clientToken {
+		logger.Error(referenceId, "WARN - Users_Create_Conn - Invalid clientToken")
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "401002",
 			ErrorMessage: "Unauthorized",
@@ -148,11 +130,8 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dapatkan informasi pengguna dari session_id
-
 	errQuery2 := conn.QueryRow("SELECT username, role FROM sysuser.user WHERE id = $1", userData.UserID).
 		Scan(&userData.Username, &userData.Role)
-
 	if errQuery2 != nil {
 		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to retrieve user data:", errQuery2)
 		utils.Response(w, utils.ResultFormat{
@@ -162,7 +141,7 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dapatkan WebSocketHub
+	// Hub WebSocket
 	hub, err := pubsub.GetWebSocketHub(referenceId)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to initialize WebSocketHub:", err)
@@ -173,18 +152,9 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, exists := hub.DeviceConn[deviceIDInt]
-	if !exists {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - Users_Create_Conn - Device connection not found for device ID: %d", deviceIDInt))
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "400003",
-			ErrorMessage: "Invalid Request",
-		})
-		return
-	}
+	var wsConn *websocket.Conn
 
-	// Upgrade ke WebSocket
-	wsConn, err := userUpgrader.Upgrade(w, r, nil)
+	wsConn, err = userUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Users_Create_Conn - WebSocket upgrade failed:", err)
 		utils.Response(w, utils.ResultFormat{
@@ -193,52 +163,126 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	logger.Info(referenceId, "INFO - WebSocket connection upgraded successfully")
+	// Cek apakah user sudah punya koneksi WebSocket
+	existingConn, ok := hub.UserConn[userData.UserID]
+	logger.Debug(referenceId, "DEBUG - Users_Create_Conn - Existing conn: ", existingConn)
+	if ok && existingConn != nil {
+		hub.RemoveUserFromWebSocket(referenceId, existingConn, userData.UserID)
+		existingConn.Close()
+	}
 
-	errAddUser := hub.AddUserToWebsocket(referenceId, wsConn, userData.UserID, userData.Username, userData.Role, deviceIDInt)
+	errAddUser := hub.AddUserToWebSocket(referenceId, wsConn, userData.UserID, userData.Username, userData.Role)
 	if errAddUser != nil {
-
 		wsConn.Close()
-
-		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to add user to WebSocket hub:", err)
+		logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to add user to WebSocket hub:", errAddUser)
 		utils.Response(w, utils.ResultFormat{
 			ErrorCode:    "500005",
 			ErrorMessage: "Internal Server Error",
 		})
 		return
 	}
-
-	errSubs := hub.SubscribeUserToChannel(referenceId, wsConn, deviceID)
-	if errSubs != nil {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to subscribe user to Redis channel: %v", err))
-		utils.Response(w, utils.ResultFormat{
-			ErrorCode:    "500006",
-			ErrorMessage: "Internal Server Error",
-		})
-		return
-	}
-
+	// Reader routine
 	go func() {
+		hub.Mu.Lock()
+		userClient, ok := hub.Users[wsConn]
+		hub.Mu.Unlock()
+		if !ok {
+			logger.Error(referenceId, "ERROR - WebSocket handler - User client not found for connection")
+			return
+		}
 		defer func() {
-			errRemoveUser := hub.RemoveUserFromWebSocket(referenceId, wsConn)
-			if errRemoveUser != nil {
-				logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to remove user from WebSocket hub:", errRemoveUser)
-				return
-			}
-
+			hub.RemoveUserFromWebSocket(referenceId, wsConn, userData.UserID)
 			logger.Info(referenceId, "INFO - Users_Create_Conn - WebSocket connection closed")
 		}()
 
 		for {
-			_, _, err := wsConn.ReadMessage()
+			_, msg, err := wsConn.ReadMessage()
 			if err != nil {
 				logger.Error(referenceId, "ERROR - Users_Create_Conn - WebSocket read error:", err)
 				break
+			}
+
+			logger.Debug(referenceId, fmt.Sprintf("DEBUG - Users_Create_Conn - incoming message from user: %d: ,  %+v", userData.UserID, msg))
+
+			var incoming struct {
+				Type     string `json:"type"`
+				DeviceID int64  `json:"device_id"`
+			}
+
+			if err := json.Unmarshal(msg, &incoming); err != nil {
+				logger.Warning(referenceId, fmt.Sprintf("WARNING - Users_Create_Conn - Invalid message format: %s", string(msg)))
+				continue
+			}
+
+			if incoming.DeviceID == 0 || incoming.Type == "" {
+				logger.Warning(referenceId, fmt.Sprintf("WARNING - Users_Create_Conn - Missing required fields in message: %s", string(msg)))
+				continue
+			}
+
+			switch incoming.Type {
+			case "subscribe":
+				if err := hub.SubscribeUserToChannel(referenceId, wsConn, userData.UserID, incoming.DeviceID, conn, &hub.Mu); err != nil {
+					logger.Error(referenceId, "ERROR - Users_Create_Conn - Subscribe failed:", err)
+
+					// Kirim response error ke client
+					errMsg := map[string]any{
+						"type":      "subscribe_response",
+						"status":    "error",
+						"message":   "Failed to subscribe to device",
+						"device_id": incoming.DeviceID,
+					}
+					if writeErr := userClient.SafeWriteJSON(errMsg); writeErr != nil {
+						logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to send error message to client:", writeErr)
+					}
+				} else {
+
+					successMsg := map[string]any{
+						"type":      "subscribe_response",
+						"status":    "success",
+						"message":   "Successfully subscribe to device",
+						"device_id": incoming.DeviceID,
+					}
+					_ = userClient.SafeWriteJSON(successMsg)
+
+				}
+
+			case "unsubscribe":
+				channel := fmt.Sprintf("device:%d", incoming.DeviceID)
+
+				if err := hub.UnsubscribeUserFromChannel(referenceId, wsConn, channel); err != nil {
+					logger.Error(referenceId, "ERROR - Users_Create_Conn - Unsubscribe failed:", err)
+
+					// Kirim response error ke client
+					errMsg := map[string]any{
+						"type":      "unsubscribe_response",
+						"status":    "error",
+						"message":   "Failed to unsubscribe from device",
+						"device_id": incoming.DeviceID,
+					}
+					if writeErr := userClient.SafeWriteJSON(errMsg); writeErr != nil {
+						logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to send unsubscribe error to client:", writeErr)
+					}
+				} else {
+					logger.Info(referenceId, fmt.Sprintf("User %d successfully unsubscribed from device ID %d", userData.UserID, incoming.DeviceID))
+
+					successMsg := map[string]any{
+						"type":      "unsubscribe_response",
+						"status":    "success",
+						"message":   "Successfully unsubscribed from device",
+						"device_id": incoming.DeviceID,
+					}
+					if writeErr := userClient.SafeWriteJSON(successMsg); writeErr != nil {
+						logger.Error(referenceId, "ERROR - Users_Create_Conn - Failed to send unsubscribe success message to client:", writeErr)
+					}
+				}
+
+			default:
+				logger.Warning(referenceId, fmt.Sprintf("WARNING - Users_Create_Conn - Unknown message type: %s", incoming.Type))
 			}
 		}
 	}()
 
 	logger.Info(referenceId, "INFO - WebSocket connection established for user:", userData.Username)
+
 }
-
-
-
