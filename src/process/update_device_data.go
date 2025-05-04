@@ -115,6 +115,11 @@ type DeviceHandler struct {
 	Hub *pubsub.WebSocketHub
 }
 
+var newDeviceCredentials = map[string]any{
+	"name":     "",
+	"password": "",
+}
+
 // Update_Device_Data handles updating device data
 func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	startTime := time.Now()
@@ -183,13 +188,23 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 
 	// check if password exist in change_fields
 
-	if newDevicePassword, ok := changeFields["password"].(string); ok && newDevicePassword != "" {
+	if newDevicePassword, ok := changeFields["password"].(string); ok && newDevicePassword != "" && len(newDevicePassword) < 8 {
 		success := updateDevicePassword(referenceId, tx, deviceIdInt, newDevicePassword, beforeData, afterData, changeFields)
-		if !success {
+
+		if success {
+
+			newDeviceCredentials["password"] = newDevicePassword
+
+		} else {
 			result.ErrorCode = "500001"
 			result.ErrorMessage = "Failed to update device data Passsword"
 			return result
 		}
+	}
+
+	if newDeviceName, ok := changeFields["name"].(string); ok && newDeviceName != "" {
+
+		newDeviceCredentials["password"] = newDeviceName
 	}
 
 	/////////////  HANDLE UDPATE DATA FIELD ///////////
@@ -335,8 +350,6 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		logger.Error("Failed to send message to device:", err)
 	} */
 
-	logger.Debug(referenceId, "DEBUG - Update_Device_Data - Sending message to device:", deviceIdInt)
-
 	if deviceSt == 1 {
 		hub, err := pubsub.GetWebSocketHub(referenceId)
 		if err != nil {
@@ -346,22 +359,24 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 			return result
 		}
 
-		err = hub.SetDeviceAction(referenceId, deviceIdInt, "update")
-		if err != nil {
-			// Tangani error jika perangkat tidak ditemukan
-			logger.Error(referenceId, "Failed to set device action:", err)
+		// err = hub.SetDeviceAction(referenceId, deviceIdInt, "update")
+		// if err != nil {
+		// 	// Tangani error jika perangkat tidak ditemukan
+		// 	logger.Error(referenceId, "Failed to set device action:", err)
 
-			err = tx.Rollback()
-			if err != nil {
-				logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to rollback transaction:", err)
-			}
+		// 	err = tx.Rollback()
+		// 	if err != nil {
+		// 		logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to rollback transaction:", err)
+		// 	}
 
-			logger.Debug(referenceId, "DEBUG - Update_Device_Data - Rollback transaction")
+		// 	logger.Debug(referenceId, "DEBUG - Update_Device_Data - Rollback transaction")
 
-			result.ErrorCode = "500006"
-			result.ErrorMessage = "Internal server error"
-			return result
-		}
+		// 	result.ErrorCode = "500006"
+		// 	result.ErrorMessage = "Internal server error"
+		// 	return result
+		// }
+
+		hub.SetDeviceAction(referenceId, 123, newDeviceCredentials)
 
 		logger.Debug(referenceId, "DEBUG - Update_Device_Data - Device action set to update for device ID:", deviceIdInt)
 	}

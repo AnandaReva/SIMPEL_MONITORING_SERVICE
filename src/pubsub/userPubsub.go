@@ -35,7 +35,7 @@ func (hub *WebSocketHub) AddUserToWebSocket(
 		UserID:             userId,
 		Username:           username,
 		Role:               role,
-		Conn:               conn,
+		WSConn:             conn,
 		ChannelsSubscribed: make(map[string]bool), // Awalnya kosong
 		PubSubs:            make(map[string]*redis.PubSub),
 		PubSubCancels:      make(map[string]context.CancelFunc),
@@ -208,7 +208,7 @@ func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *we
 func (userClient *UserClient) SafeWriteJSON(data any) error {
 	userClient.WriteMutex.Lock()
 	defer userClient.WriteMutex.Unlock()
-	return userClient.Conn.WriteJSON(data)
+	return userClient.WSConn.WriteJSON(data)
 }
 
 /* func (hub *WebSocketHub) SubscribeUserToChannel(referenceId string, userConn *websocket.Conn, userId int64, deviceID int64, db *sqlx.DB) error {

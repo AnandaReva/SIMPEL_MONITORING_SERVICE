@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"monitoring_service/logger"
 	"monitoring_service/utils"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -115,15 +116,20 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
-	// Order by
-	orderBy, ok := param["order_by"].(string)
-	if !ok || orderBy == "" {
-		orderBy = "last_tstamp"
+	orderBy := "last_tstamp"
+	if val, ok := param["order_by"].(string); ok {
+		lower := strings.ToLower(val)
+		if lower == "last_tstamp" || lower == "create_tstamp" || lower == "name" {
+			orderBy = lower
+		}
 	}
 
-	sortType, ok := param["sort_type"].(string)
-	if !ok || sortType == "" {
-		sortType = "ASC"
+	sortType := "DESC"
+	if val, ok := param["sort_type"].(string); ok {
+		lower := strings.ToLower(val)
+		if lower == "asc" || lower == "desc" {
+			sortType = strings.ToUpper(lower)
+		}
 	}
 
 	// Query utama dengan pagination

@@ -41,17 +41,18 @@ type WebSocketHub struct {
 type DeviceClient struct {
 	DeviceID         int64
 	DeviceName       string
-	Conn             *websocket.Conn
+	WSConn           *websocket.Conn
+	WriteMutex       sync.Mutex
 	ChannelToPublish string
 	PubSub           *redis.PubSub
-	Action           string
+	Action           map[string]any
 }
 
 type UserClient struct {
 	UserID             int64
 	Username           string
 	Role               string
-	Conn               *websocket.Conn
+	WSConn             *websocket.Conn
 	WriteMutex         sync.Mutex
 	ChannelsSubscribed map[string]bool
 	PubSubs            map[string]*redis.PubSub

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"monitoring_service/logger"
 	"sort"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -32,9 +33,8 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 	device := &DeviceClient{
 		DeviceID:         deviceID,
 		DeviceName:       deviceName,
-		Conn:             conn,
+		WSConn:           conn,
 		ChannelToPublish: fmt.Sprintf("device:%d", deviceID),
-		Action:           "",
 	}
 
 	hub.Devices[conn] = device
@@ -42,6 +42,12 @@ func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocke
 
 	logger.Info(referenceID, fmt.Sprintf("INFO - AddDeviceToWebSocket - New device connected - DeviceID: %d, DeviceName: %s", deviceID, deviceName))
 	return nil
+}
+
+func (deviceClient *DeviceClient) SafeWriteJSON(data any) error {
+	deviceClient.WriteMutex.Lock()
+	defer deviceClient.WriteMutex.Unlock()
+	return deviceClient.WSConn.WriteJSON(data)
 }
 
 func (hub *WebSocketHub) RemoveDeviceFromWebSocket(referenceId string, conn *websocket.Conn) error {
@@ -99,8 +105,6 @@ func (hub *WebSocketHub) UnsubscribeAllUsersFromChannel(referenceId string, chan
 		}
 	}
 
-	
-
 	logger.Info(referenceId, fmt.Sprintf("INFO - UnsubscribeAllUsersFromChannel - Unsubscribed %d users from channel: %s", len(connsToUnsub), channel))
 	return nil
 }
@@ -141,7 +145,6 @@ func PushDataToBuffer(ctx context.Context, data string, referenceId string) erro
 		logger.Error(referenceId, "ERROR - Redis client is nil, cannot push data to buffer")
 		return fmt.Errorf("redis client is not initialized or failed to reconnect")
 	}
-
 	logger.Info(referenceId, fmt.Sprintf("INFO - Pushing data to buffer: %s", data))
 
 	redisBufferName := "buffer:device_data"
@@ -156,46 +159,95 @@ func PushDataToBuffer(ctx context.Context, data string, referenceId string) erro
 	return nil
 }
 
+
+/*exp newDeviceCredentials:
+{
+	"name": "new device_name",
+	"password" : "new device_password"
+
+} 
+
+!!note : noly send updated creadential	
+
+exp action map :
+1. update = 
+ {
+	"type" : "update",
+	"new_device_credentials" : {
+		"name" : "new_name" //if provided
+		"password " : "new password"		//if provided	
+	}
+
+}
+2. restart =
+{
+	"type" : "restart"
+},
+2. deep_sleep =
+{
+	"type" : "deep_sleep"
+}
+*/
 // GetDeviceAction retrieves the action of a device based on its DeviceID.
-func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (string, error) {
+func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (map[string]any, error) {
 	hub.Mu.Lock()
 	defer hub.Mu.Unlock()
 
 	logger.Debug(referenceId, fmt.Sprintf("DEBUG - GetDeviceAction - Device ID: %d", deviceID))
 
-	// Check if the device is connected
 	if _, exists := hub.DeviceConn[deviceID]; exists {
-		// Iterate through Devices map to find the DeviceClient associated with the connection
 		for _, client := range hub.Devices {
 			if client.DeviceID == deviceID {
-
 				return client.Action, nil
 			}
 		}
 	}
-	return "", fmt.Errorf("device with ID %d not found", deviceID)
+	return nil, fmt.Errorf("device with ID %d not found", deviceID)
 }
 
-// SetDeviceAction sets the action of a device based on its DeviceID.
-func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceID int64, action string) error {
+
+// SetDeviceAction sets an action for a connected device.
+func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceId int64, newDeviceCredentials map[string]any) error {
 	hub.Mu.Lock()
 	defer hub.Mu.Unlock()
 
-	logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - Device ID: %d, Action: %s", deviceID, action))
+	logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - Device ID: %d", deviceId))
 
-	// Check if the device is connected
-	if _, exists := hub.DeviceConn[deviceID]; exists {
-		// Iterate through Devices map to find the DeviceClient associated with the connection
-		for _, client := range hub.Devices {
-			if client.DeviceID == deviceID {
-				// Update the action of the device
-				client.Action = action
-				return nil
-			}
+	// Cek apakah device terhubung
+	if conn, exists := hub.DeviceConn[deviceId]; exists {
+		client, ok := hub.Devices[conn]
+		if !ok {
+			return fmt.Errorf("device client not found in Devices map for device ID %d", deviceId)
 		}
+
+		// Susun payload action map
+		actionMap := map[string]any{
+			"type": "update", // default action type
+		}
+
+		// Tambahkan credential baru jika ada
+		newCreds := make(map[string]any)
+		if newName, ok := newDeviceCredentials["name"].(string); ok && strings.TrimSpace(newName) != "" {
+			newCreds["name"] = newName
+			logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - new name: %s", newName))
+		}
+		if newPwd, ok := newDeviceCredentials["password"].(string); ok && strings.TrimSpace(newPwd) != "" {
+			newCreds["password"] = newPwd
+			logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - new password: %s", newPwd))
+		}
+		if len(newCreds) > 0 {
+			actionMap["new_device_credentials"] = newCreds
+		}
+
+		// Set action map ke client
+		client.Action = actionMap
+		return nil
 	}
-	return fmt.Errorf("device with ID %d not found", deviceID)
+
+	return fmt.Errorf("device with ID %d not found", deviceId)
 }
+
+
 
 // GetActiveDevices mengembalikan daftar perangkat yang sedang terhubung dengan pagination
 func (hub *WebSocketHub) GetActiveDevices(referenceId string, pageNumber int64, pageSize int64) []*DeviceClient {

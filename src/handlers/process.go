@@ -112,6 +112,19 @@ func initProcessMap() {
 		class:          "device",
 	}
 
+	// report processes
+	prcsMap["get_report_year_list"] = prcs{
+		userFunction: process.Get_Report_Year_List,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	prcsMap["get_month_year_list"] = prcs{
+		userFunction: process.Get_Report_Month_List,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
 	InitPrcs = true
 }
 
