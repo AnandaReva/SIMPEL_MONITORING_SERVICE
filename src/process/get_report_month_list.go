@@ -33,7 +33,7 @@ exp get Montoh data :  SELECT
 
 	EXTRACT(MONTH FROM timestamp) AS month_number,
 	TO_CHAR(timestamp, 'Month') AS month_name,
-	COUNT(*) AS record_count,
+	COUNT(*) AS total_data,
 	MIN(timestamp) AS first_record_timestamp,
 	MAX(timestamp) AS last_record_timestamp
 
@@ -53,11 +53,13 @@ import (
 )
 
 type MonthList struct {
-	MonthNumber          int64  `db:"month_number" json:"month_number"`
-	MonthName            string `db:"month_name" json:"month_name"`
-	FirstRecordTimestamp string `db:"first_record_timestamp" json:"first_record_timestamp"`
-	LastRecordTimestamp  string `db:"last_record_timestamp" json:"last_record_timestamp"`
-	RecordCount          int64  `db:"record_count" json:"record_count"`
+	MonthNumber          int64   `db:"month_number" json:"month_number"`
+	MonthName            string  `db:"month_name" json:"month_name"`
+	FirstRecordTimestamp string  `db:"first_record_timestamp" json:"first_record_timestamp"`
+	LastRecordTimestamp  string  `db:"last_record_timestamp" json:"last_record_timestamp"`
+	EnegyConsumption     float64 `db:"max_energy" json:"energy_consumed_count"`
+	TotalData            int64   `db:"total_data" json:"total_data"`
+	TotalSize            float64 `db:"total_size" json:"total_size_bytes"`
 }
 
 func Get_Report_Month_List(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
@@ -88,13 +90,17 @@ func Get_Report_Month_List(referenceId string, conn *sqlx.DB, userID int64, role
 		SELECT
 			EXTRACT(MONTH FROM timestamp) AS month_number,
 			TO_CHAR(timestamp, 'Month') AS month_name,
-			MIN(timestamp) AS first_record_timestamp,
-			MAX(timestamp) AS last_record_timestamp,
-			COUNT(*) AS record_count
+
+			TO_CHAR(MIN(timestamp), 'YYYY-MM-DD HH24:MI:SS') AS first_record_timestamp,
+			TO_CHAR(MAX(timestamp), 'YYYY-MM-DD HH24:MI:SS') AS last_record_timestamp,
+			MAX(energy) AS max_energy,
+			SUM(pg_column_size(data.*))::float AS total_size,
+
+			COUNT(*) AS total_data
 		FROM device.data
 		WHERE unit_id = (
 			SELECT id FROM device.unit 
-			WHERE device_id = $1 AND deleted_at IS NULL LIMIT 1
+			WHERE id = $1  LIMIT 1
 		)
 		AND EXTRACT(YEAR FROM timestamp) = $2
 		GROUP BY month_number, month_name

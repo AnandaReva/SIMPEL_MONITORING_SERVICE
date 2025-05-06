@@ -7,6 +7,7 @@ import (
 	"monitoring_service/logger"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -14,22 +15,30 @@ import (
 // Menambahkan Device Baru
 func (hub *WebSocketHub) AddDeviceToWebSocket(referenceID string, conn *websocket.Conn, deviceID int64, deviceName string) error {
 	hub.Mu.Lock()
-	defer hub.Mu.Unlock()
 
-	// Pastikan tidak ada koneksi lain yang sedang ditambahkan
-	if _, exists := hub.DeviceConn[deviceID]; exists {
+	// Jika sudah ada koneksi sebelumnya, tutup dulu koneksi lama
+	if oldConn, exists := hub.DeviceConn[deviceID]; exists {
 		logger.Warning(referenceID, fmt.Sprintf("WARNING - AddDeviceToWebSocket - Device %s already connected, closing old connection.", deviceName))
-		hub.RemoveDeviceFromWebSocket(referenceID, hub.DeviceConn[deviceID])
+		// Close dulu, biar goroutine lama stop
+		oldConn.Close()
+		hub.Mu.Unlock()
+
+		// Beri jeda sebentar agar goroutine lama sempat menyadari
+		time.Sleep(100 * time.Millisecond)
+		_ = hub.RemoveDeviceFromWebSocket(referenceID, oldConn)
+
+		// Re-lock untuk proses pendaftaran baru
+		hub.Mu.Lock()
 	}
 
-	// Validasi koneksi baru
+	defer hub.Mu.Unlock()
+
 	if conn == nil {
 		errMsg := fmt.Sprintf("ERROR - AddDeviceToWebSocket - WebSocket connection is nil for device: %s", deviceName)
 		logger.Error(referenceID, errMsg)
 		return errors.New(errMsg)
 	}
 
-	// Tambahkan device baru ke daftar WebSocket secara atomik
 	device := &DeviceClient{
 		DeviceID:         deviceID,
 		DeviceName:       deviceName,
@@ -121,7 +130,7 @@ func (hub *WebSocketHub) DevicePublishToChannel(referenceId string, deviceID int
 	channelName := fmt.Sprintf("device:%d", deviceID)
 
 	var err error
-	for i := 0; i < 3; i++ { // Retry maksimal 3 kali
+	for i := range 3 { // Retry maksimal 3 kali
 		err = redisClient.Publish(ctx, channelName, data).Err()
 		if err == nil {
 			break
@@ -159,23 +168,22 @@ func PushDataToBuffer(ctx context.Context, data string, referenceId string) erro
 	return nil
 }
 
-
 /*exp newDeviceCredentials:
 {
 	"name": "new device_name",
 	"password" : "new device_password"
 
-} 
+}
 
-!!note : noly send updated creadential	
+!!note : noly send updated creadential
 
 exp action map :
-1. update = 
+1. update =
  {
 	"type" : "update",
 	"new_device_credentials" : {
 		"name" : "new_name" //if provided
-		"password " : "new password"		//if provided	
+		"password " : "new password"		//if provided
 	}
 
 }
@@ -193,7 +201,7 @@ func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (ma
 	hub.Mu.Lock()
 	defer hub.Mu.Unlock()
 
-	logger.Debug(referenceId, fmt.Sprintf("DEBUG - GetDeviceAction - Device ID: %d", deviceID))
+	//logger.Debug(referenceId, fmt.Sprintf("DEBUG - GetDeviceAction - Device ID: %d", deviceID))
 
 	if _, exists := hub.DeviceConn[deviceID]; exists {
 		for _, client := range hub.Devices {
@@ -204,7 +212,6 @@ func (hub *WebSocketHub) GetDeviceAction(referenceId string, deviceID int64) (ma
 	}
 	return nil, fmt.Errorf("device with ID %d not found", deviceID)
 }
-
 
 // SetDeviceAction sets an action for a connected device.
 func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceId int64, newDeviceCredentials map[string]any) error {
@@ -246,8 +253,6 @@ func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceId int64, new
 
 	return fmt.Errorf("device with ID %d not found", deviceId)
 }
-
-
 
 // GetActiveDevices mengembalikan daftar perangkat yang sedang terhubung dengan pagination
 func (hub *WebSocketHub) GetActiveDevices(referenceId string, pageNumber int64, pageSize int64) []*DeviceClient {

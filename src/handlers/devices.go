@@ -169,10 +169,70 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 	pingTicker := time.NewTicker(time.Duration(configs.GetDeviceWsPingInterval()) * time.Second)
 	done := make(chan struct{})
 
-	// Goroutine untuk cek timeout ping
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				hub.Mu.Lock()
+				deviceClient := hub.Devices[wsConn]
+				hub.Mu.Unlock()
+
+				currAction, err := hub.GetDeviceAction(referenceId, deviceData.DeviceID)
+				if err != nil {
+					logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to get device action: %v", err))
+					continue
+				}
+
+				actionType, ok := currAction["type"].(string)
+				if !ok || strings.TrimSpace(actionType) == "" {
+					continue
+				}
+
+				if ActionAvailable[actionType] {
+					logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Current action for device:", currAction)
+
+					messageToDeviceBytes, err := json.Marshal(currAction)
+					if err != nil {
+						logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to marshal message: %v", err))
+						continue
+					}
+
+					if deviceClient == nil {
+						logger.Error(referenceId, "ERROR - Device_Create_Conn - Device client not found for connection")
+						return
+					}
+
+					if err := deviceClient.SafeWriteJSON(currAction); err != nil {
+						logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - SafeWriteJSON failed: %v", err))
+						return
+					}
+
+					logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Sent message to device:", string(messageToDeviceBytes))
+
+					err = hub.SetDeviceAction(referenceId, deviceData.DeviceID, map[string]any{})
+					if err != nil {
+						logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to reset device action: %v", err))
+						return
+					}
+				} else {
+					logger.Warning(referenceId, fmt.Sprintf("WARNING - Action type %s not available for device %d", actionType, deviceData.DeviceID))
+				}
+
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	go func() {
 		hub.Mu.Lock()
-		_, ok := hub.Users[wsConn]
+		_, ok := hub.Devices[wsConn]
 		if !ok {
 			logger.Error(referenceId, "ERROR - WebSocket handler - Device client not found for connection")
 			hub.Mu.Unlock() // Pastikan di-unlock sebelum return
@@ -203,64 +263,9 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-
 	// Loop utama membaca pesan WebSocket
 	for {
-
-		hub.Mu.Lock()
-		deviceClient := hub.Users[wsConn]
-		hub.Mu.Unlock()
-	
-		///////////// CHECK ACTOIN //////////////
-		currAction, err := hub.GetDeviceAction(referenceId, deviceData.DeviceID)
-		if err != nil {
-			logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to get device action: %v", err))
-			continue
-		}
-
-		logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Current action for device:", currAction)
-
-		// Ambil type dari action map
-		actionType, ok := currAction["type"].(string)
-		if !ok || strings.TrimSpace(actionType) == "" {
-			continue // tidak ada action
-		}
-
-		// Periksa apakah actionType ada dalam actionAvailable
-		if ActionAvailable[actionType] {
-			// Kirim seluruh currAction sebagai message
-			messageToDeviceBytes, err := json.Marshal(currAction)
-			if err != nil {
-				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to marshal message: %v", err))
-				continue
-			}
-
-			if !ok {
-				logger.Error(referenceId, "ERROR - Device_Create_Conn - Device client not found for connection")
-				return
-			}
-
-			if err := deviceClient.SafeWriteJSON(currAction); err != nil {
-				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - SafeWriteJSON failed: %v", err))
-				return
-			}
-
-			logger.Debug(referenceId, "DEBUG - Device_Create_Conn - Sent message to device:", string(messageToDeviceBytes))
-
-			// Kosongkan action setelah dikirim
-			err = hub.SetDeviceAction(referenceId, deviceData.DeviceID, map[string]any{}) // set kosong
-			if err != nil {
-				logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to reset device action: %v", err))
-				return
-			}
-
-		} else {
-			logger.Warning(referenceId, fmt.Sprintf("WARNING - Action type %s not available for device %d", actionType, deviceData.DeviceID))
-		}
-
-		//////////// CHECK MESSAGE FROM DEVICE ////////////
 		messageType, messageFromDevice, err := wsConn.ReadMessage()
-
 		if err != nil {
 			logger.Warning(referenceId, "WARN - Device_Create_Conn - WebSocket disconnected:", err)
 			break
@@ -270,14 +275,12 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Decode JSON
 		var msg map[string]any
 		if err := json.Unmarshal(messageFromDevice, &msg); err != nil {
 			logger.Error(referenceId, "ERROR - Device_Create_Conn - Invalid JSON:", err)
 			continue
 		}
 
-		// Ambil field "type" dengan aman
 		rawT, exists := msg["type"]
 		if !exists {
 			logger.Warning(referenceId, "WARN - Device_Create_Conn - Missing 'type' field, skipping message")
@@ -289,7 +292,6 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Tangani sesuai tipe
 		switch t {
 		case "ping":
 			lastPing = time.Now()
@@ -308,6 +310,7 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 			logger.Warning(referenceId, "WARNING - Device_Create_Conn - Unknown message type:", t)
 		}
 	}
+
 	// Bersihkan ticker & disconnect
 
 	close(done)

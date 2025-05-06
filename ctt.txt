@@ -6,7 +6,13 @@ set DBUSER=revaananda
 set DBPASS=qwerqwer
 set DBPORT=5432
 set DBNAME=simpel
+set KEY=f1b2d3c4e5f60798765a4b32c1d2e3f4a5b6c7d8e9f1a2b3c4d5e6f7a8b9c0d1
 
+set SMTPSERVER=smtp.gmail.com
+set SMTPPORT=587
+set SMTPUSER=namadepannamabelakang1781945@gmail.com
+set SMTPPASS="cyyo nldu kpgk lfku"
+set SMTPFROM=namadepannamabelakang1781945@gmail.com
 
 //linux
 export DBDRIVER=postgres
@@ -30,45 +36,3 @@ export SMTPPORT=587
 export SMTPUSER=namadepannamabelakang1781945@gmail.com
 export SMTPPASS="cyyo nldu kpgk lfku"
 export SMTPFROM=namadepannamabelakang1781945@gmail.com
-
-
-### Langkah-langkah Login dengan Verifikasi Token
-
-1. **Pengguna mengirim permintaan login**
-   - Input: `username` dan `password`.
-   - Validasi: Pastikan `username` dan `password` tidak kosong.
-
-2. **Ambil data pengguna dari database**
-   - Query tabel `sysuser.userCred` untuk mendapatkan `id`, `salt`, dan `saltedpassword` berdasarkan `username`.
-
-3. **Validasi password**
-   - Buat `computedPassword` dengan menghash password yang diberikan menggunakan `salt` dari database.
-   - Cocokkan hasil `computedPassword` dengan `saltedpassword` yang tersimpan.
-   - Jika tidak cocok, kirim error "Unauthorized".
-
-4. **Buat dan simpan nonce**
-   - Generate `halfNonce` (8 byte).
-   - Simpan `halfNonce` ke tabel `sysuser.token` dengan `user_id` dan timestamp.
-
-5. **Kirim nonce ke client untuk verifikasi token**
-   - Client harus menggabungkan `halfNonce` dengan `newNonce` dan mengirim kembali `full_nonce`.
-
-### Langkah-langkah Verifikasi Token
-
-6. **Client mengirim `full_nonce`**
-   - Server menerima `full_nonce`.
-   - Validasi: `full_nonce` harus memiliki panjang minimal 16 karakter.
-
-7. **Ambil `user_id` berdasarkan `full_nonce`**
-   - Cek apakah `full_nonce` cocok dengan gabungan `halfNonce` yang disimpan di database.
-
-8. **Hitung HMAC dan buat sesi**
-   - Hitung HMAC dari `nonce` menggunakan `saltedpassword`.
-   - Generate `session_id` acak.
-   - Simpan sesi ke tabel `sysuser.session`.
-
-9. **Hapus nonce yang sudah digunakan**
-   - Hapus `nonce` dari tabel `sysuser.token`.
-
-10. **Kirim respons ke client**
-    - Data yang dikirim: `session_id`, `username`, `session_hash`.

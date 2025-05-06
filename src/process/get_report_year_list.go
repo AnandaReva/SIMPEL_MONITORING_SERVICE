@@ -37,7 +37,7 @@ SELECT
 	EXTRACT(YEAR FROM timestamp) AS year,
 	MIN(timestamp) AS first_timestamp,
 	MAX(timestamp) AS last_timestamp,
-	COUNT(*) AS record_count
+	COUNT(*) AS total_data
 
 FROM device.data
 GROUP BY year
@@ -47,8 +47,6 @@ LIMIT 5 OFFSET 0;
 // total years
 SELECT COUNT(DISTINCT EXTRACT(YEAR FROM timestamp)) AS total_years
 FROM device.data;
-
-
 */
 package process
 
@@ -62,10 +60,12 @@ import (
 )
 
 type YearList struct {
-	Year                 int64  `db:"year" json:"year"`
-	FirstRecordTimestamp string `db:"first_record_timestamp" json:"first_record_timestamp"`
-	LastRecordTimestamp  string `db:"last_record_timestamp" json:"last_record_timestamp"`
-	RecordCount          int64  `db:"record_count" json:"record_count"`
+	Year                 int64   `db:"year" json:"year"`
+	FirstRecordTimestamp string  `db:"first_record_timestamp" json:"first_record_timestamp"`
+	LastRecordTimestamp  string  `db:"last_record_timestamp" json:"last_record_timestamp"`
+	EnegyConsumption     float64 `db:"max_energy" json:"energy_consumed_count"`
+	TotalData            int64   `db:"total_data" json:"total_data"`
+	TotalSize            float64 `db:"total_size" json:"total_size_bytes"`
 }
 
 func Get_Report_Year_List(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
@@ -99,7 +99,6 @@ func Get_Report_Year_List(referenceId string, conn *sqlx.DB, userID int64, role 
 		return result
 	}
 
-	// default: ORDER BY year DESC
 	sortType := "DESC"
 	if val, ok := param["sort_type"].(string); ok {
 		lower := strings.ToLower(val)
@@ -111,7 +110,7 @@ func Get_Report_Year_List(referenceId string, conn *sqlx.DB, userID int64, role 
 	orderBy := "year"
 	if val, ok := param["order_by"].(string); ok {
 		lower := strings.ToLower(val)
-		if lower == "year" || lower == "record_count" {
+		if lower == "year" || lower == "total_data" {
 			orderBy = lower
 		}
 	}
@@ -119,18 +118,12 @@ func Get_Report_Year_List(referenceId string, conn *sqlx.DB, userID int64, role 
 	offset := (int(pageNumber) - 1) * int(pageSize)
 	var totalData int
 
-	baseQuery := `
-	FROM device.data 
-	WHERE unit_id = (
-		SELECT id FROM device.unit 
-		WHERE device_id = $1 AND deleted_at IS NULL LIMIT 1
-	)
-	`
-
-	// Query total data
 	countQuery := `
 	SELECT COUNT(DISTINCT EXTRACT(YEAR FROM timestamp)) AS total
-	` + baseQuery
+	FROM device.data 
+	WHERE unit_id = (
+		SELECT id FROM device.unit WHERE id = $1 LIMIT 1
+	)`
 
 	err := conn.Get(&totalData, countQuery, int64(deviceId))
 	if err != nil {
@@ -140,28 +133,50 @@ func Get_Report_Year_List(referenceId string, conn *sqlx.DB, userID int64, role 
 		return result
 	}
 
-	// Mapping nama kolom agar aman dari SQL Injection
 	orderByMap := map[string]string{
-		"year":         "year",
-		"record_count": "record_count",
+		"year":       "year",
+		"total_data": "total_data",
 	}
-
 	orderColumn, ok := orderByMap[orderBy]
 	if !ok {
 		orderColumn = "year"
 	}
 
 	dataQuery := fmt.Sprintf(`
+	WITH monthly_energy AS (
 		SELECT
 			EXTRACT(YEAR FROM timestamp) AS year,
-			MIN(timestamp) AS first_record_timestamp,
-			MAX(timestamp) AS last_record_timestamp,
-			COUNT(*) AS record_count
-		%s
+			EXTRACT(MONTH FROM timestamp) AS month,
+			MAX(energy) AS max_energy
+		FROM device.data
+		WHERE unit_id = $1
+		GROUP BY year, month
+	),
+	yearly_summary AS (
+		SELECT
+			EXTRACT(YEAR FROM d.timestamp) AS year,
+			TO_CHAR(MIN(d.timestamp), 'YYYY-MM-DD HH24:MI:SS') AS first_record_timestamp,
+			TO_CHAR(MAX(d.timestamp), 'YYYY-MM-DD HH24:MI:SS') AS last_record_timestamp,
+			COUNT(*) AS total_data,
+			SUM(pg_column_size(d.*))::float AS total_size  -- in bytes
+
+		FROM device.data d
+		WHERE unit_id = $1
 		GROUP BY year
-		ORDER BY %s %s
-		LIMIT $2 OFFSET $3
-	`, baseQuery, orderColumn, sortType)
+	)
+	SELECT
+		ys.year,
+		ys.first_record_timestamp,
+		ys.last_record_timestamp,
+		ys.total_data,
+		ys.total_size,
+		COALESCE(SUM(me.max_energy), 0) AS max_energy
+	FROM yearly_summary ys
+	LEFT JOIN monthly_energy me ON ys.year = me.year
+	GROUP BY ys.year, ys.first_record_timestamp, ys.last_record_timestamp, ys.total_data, ys.total_size
+	ORDER BY %s %s
+	LIMIT $2 OFFSET $3
+	`, orderColumn, sortType)
 
 	var yearList []YearList
 	err = conn.Select(&yearList, dataQuery, int64(deviceId), int(pageSize), offset)
