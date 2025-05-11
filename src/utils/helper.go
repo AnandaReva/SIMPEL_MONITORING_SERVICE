@@ -29,9 +29,9 @@ func JSONencode(data any) (string, error) {
 
 // format response
 type ResultFormat struct {
-	ErrorCode    string
-	ErrorMessage string
-	Payload      map[string]any
+	ErrorCode    string         `json:"error_code"`
+	ErrorMessage string         `json:"error_message"`
+	Payload      map[string]any `json:"payload"`
 }
 
 func Response(w http.ResponseWriter, result ResultFormat) {

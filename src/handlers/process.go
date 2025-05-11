@@ -119,13 +119,22 @@ func initProcessMap() {
 		role:         []string{"system admin", "system master"},
 	}
 
-
 	prcsMap["get_report_month_list"] = prcs{
 		userFunction: process.Get_Report_Month_List,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
 
+	prcsMap["get_report_day_list"] = prcs{
+		userFunction: process.Get_Report_Day_List,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+	prcsMap["get_report_day_detail"] = prcs{
+		userFunction: process.Get_Report_Day_Detail,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
 
 	// prcsMap["get_csv_month_data"] = prcs{
 	// 	userFunction: process.Get_Report_Month_List,
@@ -133,16 +142,11 @@ func initProcessMap() {
 	// 	role:         []string{"system admin", "system master"},
 	// }
 
-
 	// prcsMap["get_csv_year_data"] = prcs{
 	// 	userFunction: process.Get_Csv_Year_Data,
 	// 	class:        "user",
 	// 	role:         []string{"system admin", "system master"},
 	// }
-
-
-
-
 
 	InitPrcs = true
 }

@@ -1,6 +1,6 @@
 package configs
 
-var version string = "0.1.22"
+var version string = "0.1.25"
 var appName string = "MONITORING_SERVICE"
 
 func GetVersion() string {
