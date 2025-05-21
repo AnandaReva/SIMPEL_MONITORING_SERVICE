@@ -1,3 +1,16 @@
+/* {
+  "name": "Sensor Air 1",
+  "password": "securePass123",
+  "read_interval": 30,
+  "image": "base64imagestringhere==",
+  "data": {
+    "Lokasi": "Gedung A",
+    "IP": "192.168.1.101",
+    "Spesifikasi": "Sensor suhu dan kelembaban"
+  }
+}
+*/
+
 package process
 
 import (

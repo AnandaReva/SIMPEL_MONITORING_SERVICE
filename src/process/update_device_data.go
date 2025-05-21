@@ -48,65 +48,59 @@ dont remove comments
 
 /*
 simpel=>
-\d device.unit;
-                                         Table "device.unit"
-     Column      |          Type          | Collation | Nullable |              Default
------------------+------------------------+-----------+----------+-----------------------------------
- id              | bigint                 |           | not null | nextval('device_id_sq'::regclass)
- name            | character varying(255) |           | not null |
- st              | integer                |           | not null |
- data            | jsonb                  |           | not null |
- create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
- last_tstamp     | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
- image           | bigint                 |           |          |
- read_interval   | integer                |           | not null |
- salted_password | character varying(128) |           | not null |
- salt            | character varying(32)  |           | not null |
+       Table "device.unit"
+      Column      |          Type          | Collation | Nullable |              Default
+------------------+------------------------+-----------+----------+-----------------------------------
+ id               | bigint                 |           | not null | nextval('device_id_sq'::regclass)
+ name             | character varying(255) |           | not null |
+ st               | integer                |           | not null |
+ data             | jsonb                  |           | not null |
+ create_timestamp | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ last_timestamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ image            | bigint                 |           |          |
+ read_interval    | integer                |           | not null |
+ salted_password  | character varying(128) |           | not null |
+ salt             | character varying(32)  |           | not null |
 Indexes:
     "unit_pkey" PRIMARY KEY, btree (id)
     "idx_device_name" btree (name)
+    "uq_device_unit_name" UNIQUE CONSTRAINT, btree (name)
 Foreign-key constraints:
-    "fk_image" FOREIGN KEY (image) REFERENCES sysfile.file(id) ON DELETE SET NULL
+    "fk_attachment" FOREIGN KEY (image) REFERENCES sysfile.file(id) ON DELETE SET NULL
 Referenced by:
-    TABLE "device.data" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-    TABLE "device.device_activity" CONSTRAINT "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+    TABLE "_timescaledb_internal._hyper_5_471_chunk" CONSTRAINT "471_471_fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
 
-
-
-simpel=> \d device.device_activity
-
-	                           Table "device.device_activity"
-	Column  |  Type  | Collation | Nullable |                   Default
-----------+--------+-----------+----------+---------------------------------------------
-	id       | bigint |           | not null | nextval('device.activity_id_seq'::regclass)
-	unit_id  | bigint |           | not null |
-	actor    | bigint |           |          |
-	activity | text   |           | not null |
-	tstamp   | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
-	before   | jsonb  |           |          |
-	after    | jsonb  |           |          |
-
+simpel=> \d device.device_activity;
+                             Table "device.device_activity"
+  Column   |  Type  | Collation | Nullable |                   Default
+-----------+--------+-----------+----------+---------------------------------------------
+ id        | bigint |           | not null | nextval('device.activity_id_seq'::regclass)
+ unit_id   | bigint |           | not null |
+ actor     | bigint |           |          |
+ activity  | text   |           | not null |
+ timestamp | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
+ before    | jsonb  |           |          |
+ after     | jsonb  |           |          |
 Indexes:
-
-	"activity_pkey" PRIMARY KEY, btree (id)
-
+    "activity_pkey" PRIMARY KEY, btree (id)
 Foreign-key constraints:
+    "fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
+    "fk_user" FOREIGN KEY (actor) REFERENCES sysuser."user"(id) ON DELETE SET NULL
 
-	"fk_unit" FOREIGN KEY (unit_id) REFERENCES device.unit(id) ON DELETE CASCADE
-	"fk_user" FOREIGN KEY (actor) REFERENCES sysuser."user"(id) ON DELETE SET NULL
+
+
 simpel=> \d sysfile.file;
-                                        Table "sysfile.file"
- Column |          Type          | Collation | Nullable |                  Default
---------+------------------------+-----------+----------+-------------------------------------------
- id     | bigint                 |           | not null | nextval('sysfile.file_id_seq'::regclass)
- tstamp | bigint                 |           | not null | EXTRACT(epoch FROM now())::bigint
- data   | text                   |           | not null |
- name   | character varying(255) |           | not null |
+                                         Table "sysfile.file"
+  Column   |          Type          | Collation | Nullable |                  Default
+-----------+------------------------+-----------+----------+-------------------------------------------
+ id        | bigint                 |           | not null | nextval('sysfile.image_id_seq'::regclass)
+ timestamp | bigint                 |           | not null | EXTRACT(epoch FROM now())::bigint
+ data      | text                   |           | not null |
+ name      | character varying(255) |           | not null |
 Indexes:
     "image_pkey" PRIMARY KEY, btree (id)
 Referenced by:
-    TABLE "device.unit" CONSTRAINT "fk_image" FOREIGN KEY (image) REFERENCES sysfile.file(id) ON DELETE SET NULL
-
+    TABLE "device.unit" CONSTRAINT "fk_attachment" FOREIGN KEY (image) REFERENCES sysfile.file(id) ON DELETE SET NULL
 
 
 */
@@ -183,8 +177,8 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 	beforeData := make(map[string]any)
 	afterData := make(map[string]any)
 
-	// Tambah last_tstamp
-	changeFields["last_tstamp"] = time.Now().Unix()
+	// Tambah last_timestamp
+	changeFields["last_timestamp"] = time.Now().Unix()
 
 	// check if password exist in change_fields
 
@@ -239,12 +233,12 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 	paramIndex := 1
 
 	for key, value := range changeFields {
-		if key != "data" && key != "image" && key != "salt" && key != "salted_password" && key != "last_tstamp" {
+		if key != "data" && key != "image" && key != "salt" && key != "salted_password" && key != "last_timestamp" {
 			updateFields = append(updateFields, fmt.Sprintf("%s = $%d", key, paramIndex))
 			updateValues = append(updateValues, value)
 			fieldNames = append(fieldNames, key) // hanya yang ini dimasukkan ke before/after log
 			paramIndex++
-		} else if key == "salt" || key == "salted_password" || key == "last_tstamp" {
+		} else if key == "salt" || key == "salted_password" || key == "last_timestamp" {
 			updateFields = append(updateFields, fmt.Sprintf("%s = $%d", key, paramIndex))
 			updateValues = append(updateValues, value)
 			paramIndex++
@@ -283,8 +277,8 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		}
 	}
 
-	// Tambahkan last_tstamp
-	// updateFields = append(updateFields, fmt.Sprintf("last_tstamp = $%d", paramIndex))
+	// Tambahkan last_timestamp
+	// updateFields = append(updateFields, fmt.Sprintf("last_timestamp = $%d", paramIndex))
 	// updateValues = append(updateValues, time.Now().Unix())
 	// paramIndex++
 
@@ -555,7 +549,7 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
  Column |          Type          | Collation | Nullable |                  Default
 --------+------------------------+-----------+----------+-------------------------------------------
  id     | bigint                 |           | not null | nextval('sysfile.file_id_seq'::regclass)
- tstamp | bigint                 |           | not null | EXTRACT(epoch FROM now())::bigint
+ timestamp | bigint                 |           | not null | EXTRACT(epoch FROM now())::bigint
  data   | text                   |           | not null |
  name   | character varying(255) |           | not null |
 Indexes:
@@ -584,7 +578,7 @@ func handleUpdateDeviceImage(referenceId string, tx *sqlx.Tx, rawImage map[strin
 
 		// Insert new image
 		insertQuery := `
-            INSERT INTO sysfile.file (data, name, tstamp)
+            INSERT INTO sysfile.file (data, name, timestamp)
             VALUES ($1, $2, EXTRACT(epoch FROM now())::bigint)
             RETURNING id;
         `
@@ -657,7 +651,7 @@ func handleUpdateDeviceImage(referenceId string, tx *sqlx.Tx, rawImage map[strin
 		// Update image
 		updateQuery := `
             UPDATE sysfile.file 
-            SET data = $1, name = $2, tstamp = EXTRACT(epoch FROM now())::bigint 
+            SET data = $1, name = $2, timestamp = EXTRACT(epoch FROM now())::bigint 
             WHERE id = $3;
         `
 		_, err = tx.Exec(updateQuery, imageData, imageName, imageId.Int64)

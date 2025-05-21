@@ -8,8 +8,8 @@
  salt            | character varying(64)  |           | not null |
  salted_password | character varying(128) |           | not null |
  data            | jsonb                  |           | not null |
- create_tstamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
- last_tstamp     | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ create_timestamp   | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
+ last_timestamp     | bigint                 |           |          | EXTRACT(epoch FROM now())::bigint
 Indexes:
 	"unit_pkey" PRIMARY KEY, btree (id)
 Referenced by:
@@ -48,12 +48,12 @@ import (
 )
 
 type DeviceList struct {
-	DeviceID           int    `db:"id" json:"device_id"`
-	DeviceName         string `db:"name" json:"device_name"`
-	DeviceSt           int    `db:"st" json:"device_st"`
-	DeviceLastTstamp   int64  `db:"last_tstamp" json:"device_last_tstamp"`
-	DeviceCreateTstamp int64  `db:"create_tstamp" json:"device_create_tstamp"`
-	DeviceNameLower    string `db:"name_lower" json:"device_name_lower"`
+	DeviceID              int    `db:"id" json:"device_id"`
+	DeviceName            string `db:"name" json:"device_name"`
+	DeviceSt              int    `db:"st" json:"device_st"`
+	DeviceLstTimeStamp    int64  `db:"last_timestamp" json:"device_last_tstamp"`
+	DeviceCreateTimeStamp int64  `db:"create_timestamp" json:"device_create_tstamp"`
+	DeviceNameLower       string `db:"name_lower" json:"device_name_lower"`
 }
 
 func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
@@ -68,7 +68,7 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Validasi parameter pagination
 	pageSize, ok := param["page_size"].(float64)
 	if !ok || pageSize <= 0 {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Device_List - Invalid page_size: %v", param["page_size"]))
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - Get_Device_List - Invalid page_size: %v", param["page_size"]))
 		result.ErrorCode = "400001"
 		result.ErrorMessage = "Invalid request"
 		return result
@@ -76,7 +76,7 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 
 	pageNumber, ok := param["page_number"].(float64)
 	if !ok || pageNumber < 1 {
-		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Device_List - Invalid page_number: %v", param["page_number"]))
+		logger.Warning(referenceId, fmt.Sprintf("WARNING - Get_Device_List - Invalid page_number: %v", param["page_number"]))
 		result.ErrorCode = "400002"
 		result.ErrorMessage = "Invalid request"
 		return result
@@ -87,12 +87,12 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 	var devices []DeviceList
 
 	// Base query
-	baseQuery := `SELECT DISTINCT id, name, st, LOWER(name) AS name_lower, last_tstamp, create_tstamp FROM device.unit WHERE 1=1`
+	baseQuery := `SELECT DISTINCT id, name, st, LOWER(name) AS name_lower, last_timestamp, create_timestamp FROM device.unit WHERE 1=1`
 	countQuery := `SELECT COUNT(DISTINCT id) FROM device.unit WHERE 1=1`
 
 	// Filter untuk search dengan LIKE query (case-insensitive)
 	if filter, ok := param["filter"].(string); ok && filter != "" {
-		//logger.Info(referenceId, fmt.Sprintf("INFO - Applying Filter: %v", filter))
+		logger.Info(referenceId, fmt.Sprintf("INFO - Applying Filter: %v", filter))
 		filterClause := fmt.Sprintf(" AND (name ILIKE '%%%s%%' OR data::text ILIKE '%%%s%%')", filter, filter)
 		baseQuery += filterClause
 		countQuery += filterClause
@@ -110,16 +110,16 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 	// Hitung total data setelah filter diterapkan
 	err := conn.Get(&totalData, countQuery)
 	if err != nil {
-		//logger.Error(referenceId, "ERROR - Get_Device_List - Failed to get total data: ", err)
+		logger.Error(referenceId, "ERROR - Get_Device_List - Failed to get total data: ", err)
 		result.ErrorCode = "500002"
 		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
-	orderBy := "last_tstamp"
+	orderBy := "last_timestamp"
 	if val, ok := param["order_by"].(string); ok {
 		lower := strings.ToLower(val)
-		if lower == "last_tstamp" || lower == "create_tstamp" || lower == "name" {
+		if lower == "last_timestamp" || lower == "create_timestamp" || lower == "name" {
 			orderBy = lower
 		}
 	}
@@ -134,7 +134,7 @@ func Get_Device_List(referenceId string, conn *sqlx.DB, userID int64, role strin
 
 	// Query utama dengan pagination
 	finalQuery := fmt.Sprintf("%s ORDER BY %s %s LIMIT %d OFFSET %d;", baseQuery, orderBy, sortType, int(pageSize), offset)
-	//logger.Info(referenceId, "INFO - Get_Device_List - Final Query: ", finalQuery)
+	logger.Info(referenceId, "INFO - Get_Device_List - Final Query: ", finalQuery)
 
 	err = conn.Select(&devices, finalQuery)
 	if err != nil {

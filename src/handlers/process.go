@@ -45,12 +45,7 @@ func initProcessMap() {
 		return
 	}
 
-	// user processes
-	prcsMap["add_device_data"] = prcs{
-		userFunction: process.Add_Device_Data,
-		class:        "user",
-		role:         []string{"system admin", "system master"},
-	}
+	// device processes
 
 	prcsMap["get_active_devices"] = prcs{
 		userFunction: process.Get_Active_Devices,
@@ -64,14 +59,8 @@ func initProcessMap() {
 		role:         []string{"system user", "system admin", "system master"},
 	}
 
-	prcsMap["get_device_data"] = prcs{
-		userFunction: process.Get_Device_Data,
-		class:        "user",
-		role:         []string{"system admin", "system master"},
-	}
-
-	prcsMap["update_device_data"] = prcs{
-		userFunction: process.Update_Device_Data,
+	prcsMap["get_device_detail"] = prcs{
+		userFunction: process.Get_Device_Detail,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
@@ -88,15 +77,35 @@ func initProcessMap() {
 		role:         []string{"system user", "system admin", "system master"},
 	}
 
-	// user managemnt
+	//device_management
+
+	prcsMap["add_device_data"] = prcs{
+		userFunction: process.Add_Device_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	prcsMap["update_device_data"] = prcs{
+		userFunction: process.Update_Device_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	prcsMap["delete_device_data"] = prcs{
+		userFunction: process.Delete_Device_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	// user processes
 	prcsMap["get_user_list"] = prcs{
 		userFunction: process.Get_User_List,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
 
-	prcsMap["get_user_data"] = prcs{
-		userFunction: process.Get_User_Data,
+	prcsMap["get_user_detail"] = prcs{
+		userFunction: process.Get_User_Detail,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}

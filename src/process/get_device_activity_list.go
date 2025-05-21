@@ -9,7 +9,7 @@
 	unit_id  | bigint |           | not null |
 	actor    | bigint |           |          |
 	activity | text   |           | not null |
-	tstamp   | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
+	timestamp   | bigint |           | not null | EXTRACT(epoch FROM now())::bigint
 	before   | jsonb  |           |          |
 	after    | jsonb  |           |          |
 
@@ -29,7 +29,7 @@ Foreign-key constraints:
 				"page_size" : 5,
 				"page_number" : 1,
 				"filter" : "update" // -> get where activity = "update"
-				"order_by": "tstamp" // default
+				"order_by": "timestamp" // default
 				"sort_type" "ASC" // defualt
 		}
 
@@ -42,7 +42,7 @@ Foreign-key constraints:
 							"actor_id" : 1,
 							"actor_full_name" : ""
 						},
-						"tstamp" : epoch unix ,
+						"timestamp" : epoch unix ,
 						"before" ; {
 						}, after : {
 						}
@@ -70,7 +70,7 @@ type DeviceActivity struct {
 	ActorRaw   *json.RawMessage `db:"actor" json:"-"`
 	Actor      *ActivityActor   `json:"actor"` // final result
 	Activity   string           `db:"activity" json:"activity_name"`
-	Tstamp     int64            `db:"tstamp" json:"tstamp"`
+	Tstamp     int64            `db:"timestamp" json:"timestamp"`
 	Before     string           `db:"before" json:"activity_before"`
 	After      string           `db:"after" json:"activity_after"`
 }
@@ -122,7 +122,7 @@ func Get_Device_Activity_List(referenceId string, conn *sqlx.DB, userID int64, r
 	SELECT 
 		da.id,
 		COALESCE(da.activity, '') AS activity,
-		da.tstamp,
+		da.timestamp,
 		COALESCE(da.before::text, '{}'::text) AS before,
 		COALESCE(da.after::text, '{}'::text) AS after,
 		CASE 
@@ -173,7 +173,7 @@ func Get_Device_Activity_List(referenceId string, conn *sqlx.DB, userID int64, r
 	// Apply sorting
 	orderBy, ok := param["order_by"].(string)
 	if !ok || orderBy == "" {
-		orderBy = "tstamp" // Default order
+		orderBy = "timestamp" // Default order
 	}
 
 	sortType, ok := param["sort_type"].(string)
