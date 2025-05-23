@@ -197,31 +197,31 @@ type MonthListRaw struct {
 }
 
 func Get_Report_Month_List(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
-    result := utils.ResultFormat{
-        ErrorCode:    "000000",
-        ErrorMessage: "",
-        Payload:      make(map[string]any),
-    }
+	result := utils.ResultFormat{
+		ErrorCode:    "000000",
+		ErrorMessage: "",
+		Payload:      make(map[string]any),
+	}
 
-    // Validate inputs
-    deviceId, ok := param["device_id"].(float64)
-    if !ok || deviceId <= 0 {
-        logger.Error(referenceId, fmt.Sprintf("Invalid device_id: %v", param["device_id"]))
-        result.ErrorCode = "400001"
-        result.ErrorMessage = "Invalid request"
-        return result
-    }
+	// Validate inputs
+	deviceId, ok := param["device_id"].(float64)
+	if !ok || deviceId <= 0 {
+		logger.Error(referenceId, fmt.Sprintf("Invalid device_id: %v", param["device_id"]))
+		result.ErrorCode = "400001"
+		result.ErrorMessage = "Invalid request"
+		return result
+	}
 
-    yearSelected, ok := param["year"].(float64)
-    if !ok || yearSelected <= 0 {
-        logger.Error(referenceId, fmt.Sprintf("Invalid year: %v", param["year"]))
-        result.ErrorCode = "400002"
-        result.ErrorMessage = "Invalid request"
-        return result
-    }
+	yearSelected, ok := param["year"].(float64)
+	if !ok || yearSelected <= 0 {
+		logger.Error(referenceId, fmt.Sprintf("Invalid year: %v", param["year"]))
+		result.ErrorCode = "400002"
+		result.ErrorMessage = "Invalid request"
+		return result
+	}
 
-    // Query monthly data
-    queryMonthList := `SELECT
+	// Query monthly data
+	queryMonthList := `SELECT
         EXTRACT(MONTH FROM d.timestamp) AS month_number,
         TO_CHAR(d.timestamp, 'Month') AS month_name,
         TO_CHAR(MIN(d.timestamp), 'YYYY-MM-DD HH24:MI:SS') AS first_record_timestamp,
@@ -250,37 +250,37 @@ func Get_Report_Month_List(referenceId string, conn *sqlx.DB, userID int64, role
     GROUP BY month_number, month_name
     ORDER BY month_number;`
 
-    var rawData []MonthListRaw
-    err := conn.Select(&rawData, queryMonthList, int64(deviceId), int(yearSelected))
-    if err != nil {
-        logger.Error(referenceId, "queryMonthList Failed:", err.Error())
-        result.ErrorCode = "500001"
-        result.ErrorMessage = "Internal server error"
-        return result
-    }
+	var rawData []MonthListRaw
+	err := conn.Select(&rawData, queryMonthList, int64(deviceId), int(yearSelected))
+	if err != nil {
+		logger.Error(referenceId, "queryMonthList Failed:", err.Error())
+		result.ErrorCode = "500001"
+		result.ErrorMessage = "Internal server error"
+		return result
+	}
 
-    // Convert monthly data to MonthList format
-    var monthList []MonthList
-    for _, row := range rawData {
-        monthList = append(monthList, MonthList{
-            MonthNumber:          row.MonthNumber,
-            MonthName:            row.MonthName,
-            FirstRecordTimestamp: row.FirstRecordTimestamp,
-            LastRecordTimestamp:  row.LastRecordTimestamp,
-            EnergyConsumedCount:  row.EnergyConsumedCount,
-            TotalData:            row.TotalData,
-            DataInterval:         row.DataInterval,
-            TotalSize:            row.TotalSize,
-            Voltage:              MonthVoltageSummary{Avg: row.AvgVoltage, Min: row.MinVoltage, Max: row.MaxVoltage},
-            Current:              MonthCurrentSummary{Avg: row.AvgCurrent, Min: row.MinCurrent, Max: row.MaxCurrent},
-            Power:                MonthPowerSummary{Avg: row.AvgPower, Min: row.MinPower, Max: row.MaxPower},
-            Frequency:            MonthFrequencySummary{Avg: row.AvgFrequency, Min: row.MinFrequency, Max: row.MaxFrequency},
-            PowerFactor:          MonthPowerFactorSummary{Avg: row.AvgPowerFactor, Min: row.MinPowerFactor, Max: row.MaxPowerFactor},
-        })
-    }
+	// Convert monthly data to MonthList format
+	var monthList []MonthList
+	for _, row := range rawData {
+		monthList = append(monthList, MonthList{
+			MonthNumber:          row.MonthNumber,
+			MonthName:            row.MonthName,
+			FirstRecordTimestamp: row.FirstRecordTimestamp,
+			LastRecordTimestamp:  row.LastRecordTimestamp,
+			EnergyConsumedCount:  row.EnergyConsumedCount,
+			TotalData:            row.TotalData,
+			DataInterval:         row.DataInterval,
+			TotalSize:            row.TotalSize,
+			Voltage:              MonthVoltageSummary{Avg: row.AvgVoltage, Min: row.MinVoltage, Max: row.MaxVoltage},
+			Current:              MonthCurrentSummary{Avg: row.AvgCurrent, Min: row.MinCurrent, Max: row.MaxCurrent},
+			Power:                MonthPowerSummary{Avg: row.AvgPower, Min: row.MinPower, Max: row.MaxPower},
+			Frequency:            MonthFrequencySummary{Avg: row.AvgFrequency, Min: row.MinFrequency, Max: row.MaxFrequency},
+			PowerFactor:          MonthPowerFactorSummary{Avg: row.AvgPowerFactor, Min: row.MinPowerFactor, Max: row.MaxPowerFactor},
+		})
+	}
 
-    // Year summary query
-    yearQuery := `SELECT
+	// Year summary query
+	yearQuery := `SELECT
         TO_CHAR(MIN(d.timestamp), 'YYYY-MM-DD HH24:MI:SS') AS first_record_timestamp,
         TO_CHAR(MAX(d.timestamp), 'YYYY-MM-DD HH24:MI:SS') AS last_record_timestamp,
         MAX(d.energy) - MIN(d.energy) AS energy_consumed,
@@ -305,71 +305,71 @@ func Get_Report_Month_List(referenceId string, conn *sqlx.DB, userID int64, role
     FROM device.data d
     WHERE EXTRACT(YEAR FROM d.timestamp) = $1 AND d.unit_id = $2`
 
-    logger.Info(referenceId, "Running yearQuery:", yearQuery)
-    logger.Info(referenceId, fmt.Sprintf("Params: year=%d, device_id=%d", int(yearSelected), int64(deviceId)))
+	logger.Info(referenceId, "Running yearQuery:", yearQuery)
+	logger.Info(referenceId, fmt.Sprintf("Params: year=%d, device_id=%d", int(yearSelected), int64(deviceId)))
 
-    var yearRaw YearDetailRaw
-    err = conn.Get(&yearRaw, yearQuery, int(yearSelected), int64(deviceId)) // Fixed parameter order
-    if err != nil {
-        logger.Error(referenceId, "Year Detail Query Failed:", err.Error())
-        result.ErrorCode = "500002"
-        result.ErrorMessage = "Internal server error"
-        return result
-    }
+	var yearRaw YearDetailRaw
+	err = conn.Get(&yearRaw, yearQuery, int(yearSelected), int64(deviceId)) // Fixed parameter order
+	if err != nil {
+		logger.Error(referenceId, "Year Detail Query Failed:", err.Error())
+		result.ErrorCode = "500002"
+		result.ErrorMessage = "Internal server error"
+		return result
+	}
 
-    logger.Debug(referenceId, fmt.Sprintf("YearDetailRaw Dump: %+v", yearRaw))
+	logger.Debug(referenceId, fmt.Sprintf("YearDetailRaw Dump: %+v", yearRaw))
 
-    // Convert to YearDetail format
-    yearSummary := YearDetail{
-        FirstRecordTimestamp: yearRaw.FirstRecordTimestamp,
-        LastRecordTimestamp:  yearRaw.LastRecordTimestamp,
-        EnergyConsumption:    yearRaw.EnergyConsumption,
-        TotalData:            yearRaw.TotalData,
-        DataInterval:         yearRaw.DataInterval,
-        TotalSizeBytes:       yearRaw.TotalSizeBytes,
-        Voltage: YearVoltageSummary{
-            Avg: yearRaw.AvgVoltage,
-            Min: yearRaw.MinVoltage,
-            Max: yearRaw.MaxVoltage,
-        },
-        Current: YearCurrentSummary{
-            Avg: yearRaw.AvgCurrent,
-            Min: yearRaw.MinCurrent,
-            Max: yearRaw.MaxCurrent,
-        },
-        Power: YearPowerSummary{
-            Avg: yearRaw.AvgPower,
-            Min: yearRaw.MinPower,
-            Max: yearRaw.MaxPower,
-        },
-        Frequency: YearFrequencySummary{
-            Avg: yearRaw.AvgFrequency,
-            Min: yearRaw.MinFrequency,
-            Max: yearRaw.MaxFrequency,
-        },
-        PowerFactor: YearPowerFactorSummary{
-            Avg: yearRaw.AvgPowerFactor,
-            Min: yearRaw.MinPowerFactor,
-            Max: yearRaw.MaxPowerFactor,
-        },
-        MonthList: monthList,
-    }
+	// Convert to YearDetail format
+	yearSummary := YearDetail{
+		FirstRecordTimestamp: yearRaw.FirstRecordTimestamp,
+		LastRecordTimestamp:  yearRaw.LastRecordTimestamp,
+		EnergyConsumption:    yearRaw.EnergyConsumption,
+		TotalData:            yearRaw.TotalData,
+		DataInterval:         yearRaw.DataInterval,
+		TotalSizeBytes:       yearRaw.TotalSizeBytes,
+		Voltage: YearVoltageSummary{
+			Avg: yearRaw.AvgVoltage,
+			Min: yearRaw.MinVoltage,
+			Max: yearRaw.MaxVoltage,
+		},
+		Current: YearCurrentSummary{
+			Avg: yearRaw.AvgCurrent,
+			Min: yearRaw.MinCurrent,
+			Max: yearRaw.MaxCurrent,
+		},
+		Power: YearPowerSummary{
+			Avg: yearRaw.AvgPower,
+			Min: yearRaw.MinPower,
+			Max: yearRaw.MaxPower,
+		},
+		Frequency: YearFrequencySummary{
+			Avg: yearRaw.AvgFrequency,
+			Min: yearRaw.MinFrequency,
+			Max: yearRaw.MaxFrequency,
+		},
+		PowerFactor: YearPowerFactorSummary{
+			Avg: yearRaw.AvgPowerFactor,
+			Min: yearRaw.MinPowerFactor,
+			Max: yearRaw.MaxPowerFactor,
+		},
+		MonthList: monthList,
+	}
 
-    result.Payload = map[string]any{
-        "year":                   int(yearSelected),
-        "first_record_timestamp": yearSummary.FirstRecordTimestamp,
-        "last_record_timestamp":  yearSummary.LastRecordTimestamp,
-        "energy_consumption":     yearSummary.EnergyConsumption,
-        "total_data":             yearSummary.TotalData,
-        "data_interval":          yearSummary.DataInterval,
-        "total_size_bytes":      yearSummary.TotalSizeBytes,
-        "voltage":                yearSummary.Voltage,
-        "current":                yearSummary.Current,
-        "power":                  yearSummary.Power,
-        "frequency":              yearSummary.Frequency,
-        "power_factor":           yearSummary.PowerFactor,
-        "month_list":             yearSummary.MonthList,
-    }
+	result.Payload = map[string]any{
+		"year":                   int(yearSelected),
+		"first_record_timestamp": yearSummary.FirstRecordTimestamp,
+		"last_record_timestamp":  yearSummary.LastRecordTimestamp,
+		"energy_consumption":     yearSummary.EnergyConsumption,
+		"total_data":             yearSummary.TotalData,
+		"data_interval":          yearSummary.DataInterval,
+		"total_size_bytes":       yearSummary.TotalSizeBytes,
+		"voltage":                yearSummary.Voltage,
+		"current":                yearSummary.Current,
+		"power":                  yearSummary.Power,
+		"frequency":              yearSummary.Frequency,
+		"power_factor":           yearSummary.PowerFactor,
+		"month_list":             yearSummary.MonthList,
+	}
 
-    return result
+	return result
 }
