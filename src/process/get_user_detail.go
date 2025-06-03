@@ -1,6 +1,7 @@
 package process
 
 import (
+	"encoding/json"
 	"fmt"
 	"monitoring_service/logger"
 	"monitoring_service/utils"
@@ -32,15 +33,15 @@ Referenced by:
 */
 
 type UserData struct {
-	UserId              int64  `db:"id" json:"user_id"`
-	Username            string `db:"username" json:"username"`
-	FullName            string `db:"full_name" json:"user_full_name"`
-	Email               string `db:"email" json:"user_email"`
-	Role                string `db:"role" json:"user_role"`
-	UserSt              int    `db:"st" json:"user_st"`
-	Data                string `db:"data" json:"user_data"`
-	UserCreateTimeStamp int64  `db:"create_timestamp" json:"user_create_timestamp"`
-	UserLastTimeStamp   int64  `db:"last_timestamp" json:"user_last_timestamp"`
+	UserId              int64           `db:"id" json:"user_id"`
+	Username            string          `db:"username" json:"username"`
+	FullName            string          `db:"full_name" json:"user_full_name"`
+	Email               string          `db:"email" json:"user_email"`
+	Role                string          `db:"role" json:"user_role"`
+	UserSt              int             `db:"st" json:"user_st"`
+	Data                json.RawMessage `db:"data" json:"user_data"`
+	UserCreateTimeStamp int64           `db:"create_timestamp" json:"user_create_timestamp"`
+	UserLastTimeStamp   int64           `db:"last_timestamp" json:"user_last_timestamp"`
 }
 
 func Get_User_Detail(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {

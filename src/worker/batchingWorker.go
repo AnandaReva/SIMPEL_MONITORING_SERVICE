@@ -127,7 +127,7 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 				logger.Warning("WORKER", "Redis memory limit exceeded! Forcing immediate data flush to database.")
 			}
 
-			data, err := fetchRedisBuffer()
+			data, err := fetchRedisBufferDeviceData()
 			if err != nil {
 				logger.Error("WORKER", "Failed to get buffer data from Redis.")
 				continue
@@ -156,7 +156,7 @@ func StartRedisToDBWorker(interval time.Duration, memoryLimit int64, stopChan <-
 	}
 }
 
-func fetchRedisBuffer() ([]DeviceData, error) {
+func fetchRedisBufferDeviceData() ([]DeviceData, error) {
 	ctx := context.Background()
 	redisClient := pubsub.GetRedisClient()
 	if redisClient == nil {
@@ -231,11 +231,6 @@ func validateDeviceData(data []DeviceData, dbConn *sqlx.DB) ([]DeviceData, error
 		return nil, nil
 	}
 
-	// dbConn, err := db.GetConnection()
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to get DB connection: %w", err)
-	// }
-
 	validUnitIDs := make(map[int64]bool)
 	rows, err := dbConn.Query("SELECT id FROM device.unit")
 	if err != nil {
@@ -281,7 +276,6 @@ func dumpDataToDB(data []DeviceData, dbConn *sqlx.DB) error {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	defer stmt.Close()
-
 	for _, d := range data {
 		_, err := stmt.Exec(d.Device_Id, d.Timestamp, d.Voltage, d.Current, d.Power, d.Energy, d.Frequency, d.Power_factor)
 		if err != nil {

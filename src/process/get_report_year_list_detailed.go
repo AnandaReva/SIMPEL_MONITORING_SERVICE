@@ -56,7 +56,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type YearList struct {
+type DetailedYearList struct {
 	Year                 int                        `db:"year" json:"year"`
 	FirstRecordTimestamp string                     `db:"first_record_timestamp" json:"first_record_timestamp"`
 	LastRecordTimestamp  string                     `db:"last_record_timestamp" json:"last_record_timestamp"`
@@ -102,7 +102,7 @@ type YearPowerFactorListSummary struct {
 }
 
 type yearRaw struct {
-	YearList
+	DetailedYearList
 
 	AvgVoltage float64 `db:"avg_voltage"`
 	MinVoltage float64 `db:"min_voltage"`
@@ -136,7 +136,7 @@ type yearPaginationVar struct {
 	PageSize  int    `json:"page_size"`
 }
 
-func Get_Report_Year_List(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
+func Get_Report_Year_List_Detail(referenceId string, conn *sqlx.DB, userID int64, role string, param map[string]any) utils.ResultFormat {
 	result := utils.ResultFormat{ErrorCode: "000000", Payload: make(map[string]any)}
 
 	// Validasi device_id
@@ -302,15 +302,15 @@ func reverseYearRawList(list []yearRaw) {
 	}
 }
 
-func transformRawToYearList(rawList []yearRaw) []YearList {
-	var result []YearList
+func transformRawToYearList(rawList []yearRaw) []DetailedYearList {
+	var result []DetailedYearList
 	for _, r := range rawList {
 		r.Voltage = YearVoltageListSummary{Avg: r.AvgVoltage, Min: r.MinVoltage, Max: r.MaxVoltage}
 		r.Current = YearCurrentListSummary{Avg: r.AvgCurrent, Min: r.MinCurrent, Max: r.MaxCurrent}
 		r.Power = YearPowerListSummary{Avg: r.AvgPower, Min: r.MinPower, Max: r.MaxPower}
 		r.Frequency = YearFrequencyListSummary{Avg: r.AvgFrequency, Min: r.MinFrequency, Max: r.MaxFrequency}
 		r.PowerFactor = YearPowerFactorListSummary{Avg: r.AvgPowerFactor, Min: r.MinPowerFactor, Max: r.MaxPowerFactor}
-		result = append(result, r.YearList)
+		result = append(result, r.DetailedYearList)
 	}
 	return result
 }
