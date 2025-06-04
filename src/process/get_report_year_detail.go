@@ -3,6 +3,7 @@ Exp response:
 
 	payload: {
 		year_detail: {
+			device_id: 123,
 			year: 2023,
 			total_energy: 1234.56,
 			first_timstamp: "2025-01-01 00:00:00",
@@ -49,7 +50,7 @@ type YearDetail struct {
 	FirstTimestamp       string     `json:"first_timestamp"`
 	LastTimestamp        string     `json:"last_timestamp"`
 	TotalData            int64      `json:"total_data"`
-	AvgDataIntervalInSec int64      `json:"avg_data_interval"` // seconds
+	AvgDataIntervalInSec float64    `json:"avg_data_interval"` // seconds
 	Power                YearMetric `json:"power"`
 	Current              YearMetric `json:"current"`
 	Voltage              YearMetric `json:"voltage"`
@@ -95,28 +96,51 @@ WITH base_data AS (
     FROM device.data
     WHERE unit_id = $2
       AND EXTRACT(YEAR FROM timestamp)::int = $1
+),
+monthly_stats AS (
+    SELECT
+        DATE_TRUNC('month', timestamp) AS month,
+        MAX(energy) AS max_energy,
+        MIN(timestamp) AS first_timestamp,
+        MAX(timestamp) AS last_timestamp,
+        COUNT(*) AS total_data,
+        AVG(interval_seconds)::numeric AS avg_data_interval,
+
+        AVG(power)::numeric AS power_avg,
+        MAX(power) AS power_max,
+        MIN(power) AS power_min,
+
+        AVG(current)::numeric AS current_avg,
+        MAX(current) AS current_max,
+        MIN(current) AS current_min,
+
+        AVG(voltage)::numeric AS voltage_avg,
+        MAX(voltage) AS voltage_max,
+        MIN(voltage) AS voltage_min
+    FROM base_data
+    GROUP BY DATE_TRUNC('month', timestamp)
 )
 
 SELECT 
     $1::int AS year,
-    COALESCE(ROUND(SUM(energy)::numeric, 2), 0) AS total_energy,
-    COALESCE(MIN(timestamp)::text, '') AS first_timestamp,
-    COALESCE(MAX(timestamp)::text, '') AS last_timestamp,
-    COUNT(*) AS total_data,
-    COALESCE(ROUND(AVG(interval_seconds)::numeric), 0) AS avg_data_interval,
+    COALESCE(SUM(max_energy), 0)::numeric AS total_energy,
+    COALESCE(MIN(first_timestamp), '1970-01-01')::text AS first_timestamp,
+    COALESCE(MAX(last_timestamp), '1970-01-01')::text AS last_timestamp,
+    COALESCE(SUM(total_data), 0) AS total_data,
+    COALESCE(AVG(avg_data_interval), 0)::numeric AS avg_data_interval,
 
-    COALESCE(ROUND(AVG(power)::numeric, 2), 0) AS power_avg,
-    COALESCE(ROUND(MAX(power)::numeric, 2), 0) AS power_max,
-    COALESCE(ROUND(MIN(power)::numeric, 2), 0) AS power_min,
+    COALESCE(AVG(power_avg), 0)::numeric AS power_avg,
+    COALESCE(MAX(power_max), 0) AS power_max,
+    COALESCE(MIN(power_min), 0) AS power_min,
 
-    COALESCE(ROUND(AVG(current)::numeric, 2), 0) AS current_avg,
-    COALESCE(ROUND(MAX(current)::numeric, 2), 0) AS current_max,
-    COALESCE(ROUND(MIN(current)::numeric, 2), 0) AS current_min,
+    COALESCE(AVG(current_avg), 0)::numeric AS current_avg,
+    COALESCE(MAX(current_max), 0) AS current_max,
+    COALESCE(MIN(current_min), 0) AS current_min,
 
-    COALESCE(ROUND(AVG(voltage)::numeric, 2), 0) AS voltage_avg,
-    COALESCE(ROUND(MAX(voltage)::numeric, 2), 0) AS voltage_max,
-    COALESCE(ROUND(MIN(voltage)::numeric, 2), 0) AS voltage_min
-FROM base_data
+    COALESCE(AVG(voltage_avg), 0)::numeric AS voltage_avg,
+    COALESCE(MAX(voltage_max), 0) AS voltage_max,
+    COALESCE(MIN(voltage_min), 0) AS voltage_min
+FROM monthly_stats;
 
 `
 
@@ -150,5 +174,8 @@ FROM base_data
 
 	// ========= SET PAYLOAD =========
 	result.Payload["year_detail"] = detail
+	result.Payload["device_id"] = deviceId
+	result.Payload["year"] = year
+	result.Payload["status"] = "success"
 	return result
 }

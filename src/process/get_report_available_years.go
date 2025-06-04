@@ -9,7 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type AvailableYear struct {
+type AvailableYears struct {
 	Year   int     `db:"year" json:"year"`
 	Energy float64 `db:"energy" json:"total_energy"`
 }
@@ -125,31 +125,47 @@ func Get_Report_Available_Years(referenceId string, conn *sqlx.DB, userID int64,
 
 	if hasStartYear {
 		yearListQuery = `
-			SELECT 
+		SELECT 
+			year,
+			SUM(max_energy)::numeric AS energy
+		FROM (
+			SELECT
 				EXTRACT(YEAR FROM timestamp)::int AS year,
-				ROUND(SUM(energy)::numeric, 2) AS energy
+				EXTRACT(MONTH FROM timestamp)::int AS month,
+				MAX(energy) AS max_energy
 			FROM device.data
-			WHERE unit_id = $1 
-				AND EXTRACT(YEAR FROM timestamp)::int ` + op + ` $2
-			GROUP BY year
-			ORDER BY year ` + order + `
-			LIMIT $3`
+			WHERE unit_id = $1
+			GROUP BY year, month
+		) monthly_energy
+		WHERE year ` + op + ` $2
+		GROUP BY year
+		ORDER BY year ` + order + `
+		LIMIT $3
+	`
 		args = []any{deviceId, startYear, pageSize}
 	} else {
 		yearListQuery = `
-			SELECT 
+		SELECT 
+			year,
+			SUM(max_energy)::numeric AS energy
+		FROM (
+			SELECT
 				EXTRACT(YEAR FROM timestamp)::int AS year,
-				ROUND(SUM(energy)::numeric, 2) AS energy
+				EXTRACT(MONTH FROM timestamp)::int AS month,
+				MAX(energy) AS max_energy
 			FROM device.data
 			WHERE unit_id = $1
-			GROUP BY year
-			ORDER BY year ` + sortType + `
-			LIMIT $2`
+			GROUP BY year, month
+		) monthly_energy
+		GROUP BY year
+		ORDER BY year ` + sortType + `
+		LIMIT $2
+	`
 		args = []any{deviceId, pageSize}
 	}
 
 	// ========== EXECUTE QUERY ==========
-	var yearList []AvailableYear
+	var yearList []AvailableYears
 	err = conn.Select(&yearList, yearListQuery, args...)
 	if err != nil {
 		logger.Error(referenceId, fmt.Sprintf(
@@ -165,6 +181,8 @@ func Get_Report_Available_Years(referenceId string, conn *sqlx.DB, userID int64,
 	result.Payload["min_year"] = minYear
 	result.Payload["max_year"] = maxYear
 	result.Payload["total_year"] = totalYear
+	result.Payload["device_id"] = deviceId
+	result.Payload["status"] = "success"
 
 	logger.Info(referenceId, fmt.Sprintf(
 		"ERROR - Get_Report_Available_Years - Success fetch available years for device_id=%d | start_year=%d | sort=%s | direction=%s | page_size=%d | years_fetched=%v",
