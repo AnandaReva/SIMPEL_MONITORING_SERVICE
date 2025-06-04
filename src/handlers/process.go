@@ -122,14 +122,14 @@ func initProcessMap() {
 	}
 
 	// report processes
-	prcsMap["get_report_year_list_detail"] = prcs{
-		userFunction: process.Get_Report_Year_List_Detail,
+	prcsMap["get_report_available_years"] = prcs{
+		userFunction: process.Get_Report_Available_Years,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
-	// report processes
-	prcsMap["get_report_available_years"] = prcs{
-		userFunction: process.Get_Report_Available_Years,
+
+	prcsMap["get_report_year_detail"] = prcs{
+		userFunction: process.Get_Report_Year_Detail,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
@@ -140,6 +140,12 @@ func initProcessMap() {
 		role:         []string{"system admin", "system master"},
 	}
 
+	/* // report processes
+	prcsMap["get_report_year_list_detail"] = prcs{
+		userFunction: process.Get_Report_Year_List_Detail,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
 	prcsMap["get_report_month_list"] = prcs{
 		userFunction: process.Get_Report_Month_List,
 		class:        "user",
@@ -151,15 +157,14 @@ func initProcessMap() {
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
+	prcsMap["get_report_day_detail"] = prcs{
+		userFunction: process.Get_Report_Day_Detail,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	} */
 
 	prcsMap["get_report_available_dates_by_month"] = prcs{
 		userFunction: process.Get_Available_Dates_By_Month,
-		class:        "user",
-		role:         []string{"system admin", "system master"},
-	}
-
-	prcsMap["get_report_day_detail"] = prcs{
-		userFunction: process.Get_Report_Day_Detail,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
