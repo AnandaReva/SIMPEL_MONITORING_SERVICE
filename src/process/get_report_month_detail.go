@@ -80,6 +80,26 @@ func Get_Report_Month_Detail(referenceId string, conn *sqlx.DB, userID int64, ro
 		return result
 	}
 
+	// ========= QUERY EXECUTION =========
+	logger.Info(referenceId, fmt.Sprintf("INFO - Get_Report_Year_Detail - Fetching data for device_id=%d year=%d", deviceId, year))
+
+	// Cek eksistensi device
+	var exists bool
+	checkQuery := `SELECT EXISTS (SELECT 1 FROM device.unit WHERE id = $1)`
+	err := conn.Get(&exists, checkQuery, deviceId)
+	if err != nil {
+		logger.Error(referenceId, fmt.Sprintf("ERROR - Get_Report_Year_Detail - Failed to check device existence: %v", err))
+		result.ErrorCode = "500002"
+		result.ErrorMessage = "Internal server error saat memeriksa perangkat"
+		return result
+	}
+	if !exists {
+		logger.Warning(referenceId, fmt.Sprintf("WARN - Get_Report_Year_Detail - Device ID %d tidak ditemukan", deviceId))
+		result.ErrorCode = "404001"
+		result.ErrorMessage = "Perangkat tidak ditemukan"
+		return result
+	}
+
 	// ===== QUERY EXECUTION =====
 	logger.Info(referenceId, fmt.Sprintf("INFO - Get_Report_Month_Detail - Fetching data for device_id=%d year=%d month=%d", deviceId, year, month))
 
@@ -146,7 +166,7 @@ FROM monthly_stats;
 `
 
 	var detail MonthDetail
-	err := conn.QueryRowx(query, year, month, deviceId).Scan(
+	err = conn.QueryRowx(query, year, month, deviceId).Scan(
 		&detail.Year,
 		&detail.Month,
 		&detail.TotalEnergy,

@@ -42,15 +42,17 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 		return result
 	}
 
-	// Hak akses
+	// Hak akses berdasarkan role hierarchy
 	if editorUserId != userId {
-		if editorRole != "system_master" && (editorRole != "system_admin" || targetRole == "system_admin") {
-			logger.Error(referenceId, "ERROR - Update_User_data - Forbidden")
+		// editorRole harus lebih tinggi dari targetRole
+		if !canEditUser(editorRole, targetRole) {
+			logger.Error(referenceId, "ERROR - Update_User_data - Forbidden by role hierarchy")
 			result.ErrorCode = "403001"
 			result.ErrorMessage = "Forbidden"
 			return result
 		}
 	} else {
+		// Jika user edit dirinya sendiri, larang ganti role
 		if editorRole == "system_master" {
 			if cf, ok := param["change_fields"].(map[string]any); ok {
 				if _, found := cf["role"]; found {
@@ -71,14 +73,25 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 		return result
 	}
 
-	// Filter field yang dilarang
-	disallowedFields := map[string]bool{"email": true, "saltedpassword": true}
+	// Hanya boleh update field status dan role
+	allowedFields := map[string]bool{"status": true, "role": true}
 	filteredFields := map[string]any{}
 	for k, v := range changeFields {
-		if !disallowedFields[strings.ToLower(k)] {
-			filteredFields[k] = v
+		kLower := strings.ToLower(k)
+		if allowedFields[kLower] {
+			if kLower == "status" {
+				statusVal, ok := v.(int)
+				if !ok || (statusVal != 0 && statusVal != 1) {
+					logger.Error(referenceId, "ERROR - Update_User_data - Invalid status value")
+					result.ErrorCode = "400002"
+					result.ErrorMessage = "Invalid status value"
+					return result
+				}
+			}
+			filteredFields[kLower] = v
 		}
 	}
+
 	if len(filteredFields) == 0 {
 		logger.Error(referenceId, "ERROR - Update_User_data - No allowed fields to update")
 		result.ErrorCode = "400001"
@@ -86,22 +99,10 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 		return result
 	}
 
-	// Validasi username
-	if username, ok := filteredFields["username"].(string); ok && username != "" {
-		var existing string
-		err := conn.Get(&existing, `SELECT username FROM sysuser.user WHERE username = $1 AND id != $2`, username, userId)
-		if err == nil && existing != "" {
-			logger.Error(referenceId, "ERROR - Update_User_data - Username exists")
-			result.ErrorCode = "409001"
-			result.ErrorMessage = "Forbidden"
-			return result
-		}
-	}
-
 	// Validasi role (jika ada)
 	if newRole, ok := filteredFields["role"].(string); ok {
 		if targetRole == "system_admin" && editorRole != "system_master" {
-			logger.Error(referenceId, "ERROR - Update_User_data - Cannot change admin")
+			logger.Error(referenceId, "ERROR - Update_User_data - Cannot change role of system_admin")
 			result.ErrorCode = "403001"
 			result.ErrorMessage = "Forbidden"
 			return result
@@ -136,11 +137,28 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Update_User_data - Update failed:", err)
 		result.ErrorCode = "500001"
-		result.ErrorMessage = "Invalid request"
+		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
 	logger.Info(referenceId, "INFO - Update_User_data - Update success")
 	result.Payload["status"] = "success"
 	return result
+}
+
+func canEditUser(editorRole, targetRole string) bool {
+	hierarchy := map[string]int{
+		"system_master": 3,
+		"system_admin":  2,
+		"user":          1,
+	}
+
+	editorLevel, ok1 := hierarchy[editorRole]
+	targetLevel, ok2 := hierarchy[targetRole]
+
+	if !ok1 || !ok2 {
+		return false
+	}
+
+	return editorLevel > targetLevel
 }
