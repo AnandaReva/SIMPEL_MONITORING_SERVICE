@@ -129,7 +129,6 @@ func MapToJSON(data map[string]any) (string, error) {
 }
 
 // JSONStringToMap converts a JSON string to a map.
-// JSONStringToMap converts a JSON string to a map.
 func JSONStringToMap(jsonStr string) (map[string]any, error) {
 	if jsonStr == "" {
 		return nil, errors.New("input JSON string is empty")
@@ -143,4 +142,20 @@ func JSONStringToMap(jsonStr string) (map[string]any, error) {
 	}
 
 	return result, nil
+}
+
+// MergeJSONB merges b into a recursively
+func MergeJSONB(a, b map[string]any) map[string]any {
+	for k, v := range b {
+		if vMap, ok := v.(map[string]any); ok {
+			if aMap, ok2 := a[k].(map[string]any); ok2 {
+				a[k] = MergeJSONB(aMap, vMap)
+			} else {
+				a[k] = vMap
+			}
+		} else {
+			a[k] = v
+		}
+	}
+	return a
 }

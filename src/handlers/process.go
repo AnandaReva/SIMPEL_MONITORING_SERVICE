@@ -109,8 +109,21 @@ func initProcessMap() {
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}
-	prcsMap["change_user_data"] = prcs{
-		userFunction: process.Change_User_Data,
+
+	prcsMap["add_user_data"] = prcs{
+		userFunction: process.Add_User_Data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	prcsMap["update_user_data"] = prcs{
+		userFunction: process.Update_User_data,
+		class:        "user",
+		role:         []string{"system admin", "system master"},
+	}
+
+	prcsMap["delete_user_data"] = prcs{
+		userFunction: process.Delete_User_Data,
 		class:        "user",
 		role:         []string{"system admin", "system master"},
 	}

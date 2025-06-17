@@ -1,6 +1,7 @@
 package process
 
 import (
+	"encoding/json"
 	"fmt"
 	"monitoring_service/logger"
 	"monitoring_service/utils"
@@ -25,7 +26,7 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 
 	logger.Info(referenceId, "INFO - Update_User_data - params:", param)
 
-	userId, ok := param["user_id"].(int64)
+	userId, ok := param["user_id"].(float64)
 	if !ok || userId <= 0 {
 		logger.Error(referenceId, "ERROR - Update_User_data - Invalid user_id")
 		result.ErrorCode = "400001"
@@ -33,8 +34,10 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 		return result
 	}
 
+	userIdInt := int64(userId)
+
 	var targetRole string
-	err := conn.Get(&targetRole, `SELECT role FROM sysuser.user WHERE id = $1`, userId)
+	err := conn.Get(&targetRole, `SELECT role FROM sysuser.user WHERE id = $1`, userIdInt)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Update_User_data - Target user not found")
 		result.ErrorCode = "400001"
@@ -43,7 +46,7 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 	}
 
 	// Hak akses berdasarkan role hierarchy
-	if editorUserId != userId {
+	if editorUserId != userIdInt {
 		// editorRole harus lebih tinggi dari targetRole
 		if !canEditUser(editorRole, targetRole) {
 			logger.Error(referenceId, "ERROR - Update_User_data - Forbidden by role hierarchy")
@@ -64,7 +67,6 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 			}
 		}
 	}
-
 	changeFields, ok := param["change_fields"].(map[string]any)
 	if !ok || len(changeFields) == 0 {
 		logger.Error(referenceId, "ERROR - Update_User_data - Invalid change_fields")
@@ -72,35 +74,23 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 		result.ErrorMessage = "Invalid request"
 		return result
 	}
-
-	// Hanya boleh update field status dan role
-	allowedFields := map[string]bool{"status": true, "role": true}
-	filteredFields := map[string]any{}
-	for k, v := range changeFields {
-		kLower := strings.ToLower(k)
-		if allowedFields[kLower] {
-			if kLower == "status" {
-				statusVal, ok := v.(int)
-				if !ok || (statusVal != 0 && statusVal != 1) {
-					logger.Error(referenceId, "ERROR - Update_User_data - Invalid status value")
-					result.ErrorCode = "400002"
-					result.ErrorMessage = "Invalid status value"
-					return result
-				}
-			}
-			filteredFields[kLower] = v
+	// Validasi khusus status (jika ada)
+	if val, ok := changeFields["status"]; ok {
+		statusFloat, ok := val.(float64)
+		if !ok || (statusFloat != 0 && statusFloat != 1) {
+			logger.Error(referenceId, "ERROR - Update_User_data - Invalid status value")
+			result.ErrorCode = "400002"
+			result.ErrorMessage = "Invalid status value"
+			return result
 		}
-	}
 
-	if len(filteredFields) == 0 {
-		logger.Error(referenceId, "ERROR - Update_User_data - No allowed fields to update")
-		result.ErrorCode = "400001"
-		result.ErrorMessage = "Invalid request"
-		return result
+		// Konversi ke int dan update dengan key baru "st"
+		changeFields["st"] = int(statusFloat)
+		delete(changeFields, "status") // Hapus key lama
 	}
 
 	// Validasi role (jika ada)
-	if newRole, ok := filteredFields["role"].(string); ok {
+	if newRole, ok := changeFields["role"].(string); ok {
 		if targetRole == "system_admin" && editorRole != "system_master" {
 			logger.Error(referenceId, "ERROR - Update_User_data - Cannot change role of system_admin")
 			result.ErrorCode = "403001"
@@ -115,11 +105,23 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 		}
 	}
 
-	// Query UPDATE
+	// Siapkan query UPDATE dari semua field yang dikirim
 	updateFields := []string{}
 	updateValues := []any{}
 	i := 1
-	for key, val := range filteredFields {
+	for key, val := range changeFields {
+		// Jika tipe val adalah map[string]interface{}, marshal ke JSON string
+		if m, ok := val.(map[string]interface{}); ok {
+			jsonVal, err := json.Marshal(m)
+			if err != nil {
+				logger.Error(referenceId, "ERROR - Update_User_data - JSON Marshal failed:", err)
+				result.ErrorCode = "500002"
+				result.ErrorMessage = "Failed to encode JSON"
+				return result
+			}
+			val = string(jsonVal)
+		}
+
 		updateFields = append(updateFields, fmt.Sprintf("%s = $%d", key, i))
 		updateValues = append(updateValues, val)
 		i++
@@ -131,7 +133,7 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 	i++
 
 	updateQuery := fmt.Sprintf("UPDATE sysuser.user SET %s WHERE id = $%d", strings.Join(updateFields, ", "), i)
-	updateValues = append(updateValues, userId)
+	updateValues = append(updateValues, userIdInt)
 
 	_, err = conn.Exec(updateQuery, updateValues...)
 	if err != nil {
@@ -144,13 +146,14 @@ func Update_User_data(referenceId string, conn *sqlx.DB, editorUserId int64, edi
 	logger.Info(referenceId, "INFO - Update_User_data - Update success")
 	result.Payload["status"] = "success"
 	return result
+
 }
 
 func canEditUser(editorRole, targetRole string) bool {
 	hierarchy := map[string]int{
-		"system_master": 3,
-		"system_admin":  2,
-		"user":          1,
+		"system master": 3,
+		"system admin":  2,
+		"system user":   1,
 	}
 
 	editorLevel, ok1 := hierarchy[editorRole]

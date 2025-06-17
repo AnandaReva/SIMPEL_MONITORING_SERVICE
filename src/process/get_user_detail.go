@@ -79,8 +79,6 @@ func Get_User_Detail(referenceId string, conn *sqlx.DB, userID int64, role strin
 		return result
 	}
 
-	result.ErrorCode = "000000"
-	result.ErrorMessage = "Success"
 	result.Payload["user_id"] = userData.UserId
 	result.Payload["username"] = userData.Username
 	result.Payload["user_full_name"] = userData.FullName
@@ -90,6 +88,8 @@ func Get_User_Detail(referenceId string, conn *sqlx.DB, userID int64, role strin
 	result.Payload["user_data"] = userData.Data
 	result.Payload["user_create_timestamp"] = userData.UserCreateTimeStamp
 	result.Payload["user_last_timestamp"] = userData.UserLastTimeStamp
+
+	result.Payload["status"] = "success"
 
 	logger.Info(referenceId, "INFO - Get_User_Detail - Success")
 	return result
