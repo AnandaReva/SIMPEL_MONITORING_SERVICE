@@ -60,7 +60,7 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 		return result
 	}
 
-	email, ok := param["email"].(string) // ubah dari int64 ke string agar sesuai format umum email
+	email, ok := param["email"].(string)
 	if !ok || email == "" {
 		logger.Error(referenceId, "ERROR - Add_User_Data - Invalid email")
 		result.ErrorCode = "400003"
@@ -76,7 +76,6 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 		return result
 	}
 
-	// Cek newUserRole tidak boleh membuat user dengan newUserRole sama atau lebih tinggi
 	if !canEditUser(editorRole, newUserRole) {
 		logger.Error(referenceId, "ERROR - Add_User_Data - Editor role: ", editorRole, " not allowed to assign new user role: ", newUserRole)
 		result.ErrorCode = "403001"
@@ -92,7 +91,21 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 		return result
 	}
 
-	// Cek apakah username atau email sudah ada
+	// Begin transaction
+	tx, err := conn.Beginx()
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Add_User_Data - Failed to begin transaction:", err)
+		result.ErrorCode = "500001"
+		result.ErrorMessage = "Internal Server Error"
+		return result
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Check existing fields within transaction
 	var existingField *string
 	queryCheck := `
 		SELECT CASE 
@@ -101,9 +114,9 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 			ELSE NULL 
 		END AS existing_field;
 	`
-	errCheck := conn.Get(&existingField, queryCheck, username, email)
-	if errCheck != nil {
-		logger.Error(referenceId, "ERROR - Add_User_Data - Error checking existing fields:", errCheck)
+	err = tx.Get(&existingField, queryCheck, username, email)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Add_User_Data - Error checking existing fields:", err)
 		result.ErrorCode = "500001"
 		result.ErrorMessage = "Internal Server Error"
 		return result
@@ -116,7 +129,7 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 		return result
 	}
 
-	// Ambil data tambahan jika ada, jika tidak masukkan objek kosong
+	// Prepare data
 	jsonData := "{}"
 	if deviceData, hasData := param["data"].(map[string]any); hasData {
 		if jsonDataBytes, err := utils.MapToJSON(deviceData); err == nil {
@@ -126,25 +139,54 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 			return utils.ResultFormat{ErrorCode: "500008", ErrorMessage: "Internal Server Error"}
 		}
 	}
-	// Enkripsi password
+
+	// Encrypt password
 	salt, _ := utils.RandomStringGenerator(16)
 	saltedPassword, _ := crypto.GeneratePBKDF2(password, salt, 32, configs.GetPBKDF2Iterations())
 
-	// Eksekusi query untuk menyimpan user baru
-	// Eksekusi query untuk menyimpan user baru
+	// Insert new user
 	queryToRegister := `
 	INSERT INTO sysuser."user" 
 		(username, full_name, email, st, salt, saltedpassword, data, role)
 	VALUES 
 		($1, $2, $3, $4, $5, $6, $7, $8)
 	RETURNING id;
-`
+	`
 	var newUserId int
-	err := conn.Get(&newUserId, queryToRegister, username, fullName, email, 1, salt, saltedPassword, jsonData, newUserRole)
-
+	err = tx.Get(&newUserId, queryToRegister, username, fullName, email, 1, salt, saltedPassword, jsonData, newUserRole)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - Add_User_Data - Failed to insert new user:", err)
 		result.ErrorCode = "500002"
+		result.ErrorMessage = "Internal Server Error"
+		return result
+	}
+
+	// Insert activity log
+	queryToInsertActivity := `
+	INSERT INTO sysuser.user_activity 
+		(user_id, activity, before, after, actor)
+	VALUES 
+		($1, $2, $3, $4, $5)
+	`
+	_, err = tx.Exec(queryToInsertActivity,
+		newUserId,
+		"register",
+		"{}", // empty before state
+		"{}", // empty after state
+		editorUserId,
+	)
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Add_User_Data - Failed to insert activity log:", err)
+		result.ErrorCode = "500003"
+		result.ErrorMessage = "Internal Server Error"
+		return result
+	}
+
+	// Commit transaction
+	err = tx.Commit()
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Add_User_Data - Failed to commit transaction:", err)
+		result.ErrorCode = "500004"
 		result.ErrorMessage = "Internal Server Error"
 		return result
 	}
@@ -154,4 +196,21 @@ func Add_User_Data(referenceId string, conn *sqlx.DB, editorUserId int64, editor
 	result.Payload["status"] = "success"
 	result.Payload["new_user_id"] = newUserId
 	return result
+}
+
+func canEditUser(editorRole, targetRole string) bool {
+	hierarchy := map[string]int{
+		"system master": 3,
+		"system admin":  2,
+		"system user":   1,
+	}
+
+	editorLevel, ok1 := hierarchy[editorRole]
+	targetLevel, ok2 := hierarchy[targetRole]
+
+	if !ok1 || !ok2 {
+		return false
+	}
+
+	return editorLevel > targetLevel
 }

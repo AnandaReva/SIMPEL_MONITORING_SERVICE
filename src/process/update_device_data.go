@@ -454,7 +454,7 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 
 	var err error
 
-	// Ambil data eksisting sebelum perubahan
+	// Get existing data before changes
 	var existingDataRaw sql.NullString
 	querySelect := `SELECT data FROM device.unit WHERE id = $1;`
 	err = tx.Get(&existingDataRaw, querySelect, deviceId)
@@ -472,24 +472,28 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 		}
 	}
 
-	// Siapkan before/after snapshot
+	// Prepare before/after snapshot
 	originalBefore := make(map[string]any)
 	updatedAfter := maps.Clone(currentData)
 
-	// Step 1: Handle delete fields
-	if deleteData, ok := dataField["delete"].(map[string]any); ok && len(deleteData) > 0 {
-		for key := range deleteData {
-			// Simpan value sebelum dihapus
-			if val, exists := currentData[key]; exists {
-				originalBefore[key] = val
-				delete(updatedAfter, key)
+	// Step 1: Handle delete fields - changed to expect an array
+	if deleteData, ok := dataField["delete"].([]any); ok && len(deleteData) > 0 {
+		for _, key := range deleteData {
+			if k, ok := key.(string); ok {
+				// Save value before deletion
+				if val, exists := currentData[k]; exists {
+					originalBefore[k] = val
+					delete(updatedAfter, k)
+				}
 			}
 		}
 
-		// Hapus dari database
+		// Build delete expression
 		expr := ""
-		for key := range deleteData {
-			expr += " - '" + key + "'"
+		for _, key := range deleteData {
+			if k, ok := key.(string); ok {
+				expr += " - '" + k + "'"
+			}
 		}
 		queryDelete := fmt.Sprintf(`UPDATE device.unit SET data = data%s WHERE id = $1;`, expr)
 		_, err = tx.Exec(queryDelete, deviceId)
@@ -518,7 +522,7 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 		}
 	}
 
-	// Step 4: Simpan hasil akhir ke database
+	// Step 4: Save final results to database
 	updatedJSON, err := utils.MapToJSON(updatedAfter)
 	if err != nil {
 		logger.Error(referenceId, "ERROR - UpdateDeviceDataField - Failed to convert map to JSON:", err)
@@ -532,7 +536,7 @@ func updateDeviceDataField(referenceId string, tx *sqlx.Tx, deviceId int64, data
 		return false
 	}
 
-	// Step 5: Simpan ke beforeData dan afterData global
+	// Step 5: Save to beforeData and afterData global
 	if len(originalBefore) > 0 {
 		beforeData["data"] = originalBefore
 	}

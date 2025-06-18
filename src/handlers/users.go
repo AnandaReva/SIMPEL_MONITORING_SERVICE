@@ -277,6 +277,22 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+			case "restart":
+				err := hub.RestartDevice(referenceId, incoming.DeviceID)
+				if err != nil {
+					logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to restart device ID %d: %v", incoming.DeviceID, err))
+					break
+				}
+				logger.Info(referenceId, fmt.Sprintf("INFO - Restart command sent to device ID %d", incoming.DeviceID))
+
+			case "deep_sleep":
+				err := hub.DeepSleepDevice(referenceId, incoming.DeviceID)
+				if err != nil {
+					logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to send deep sleep to device ID %d: %v", incoming.DeviceID, err))
+					break
+				}
+				logger.Info(referenceId, fmt.Sprintf("INFO - Deep sleep command sent to device ID %d", incoming.DeviceID))
+
 			default:
 				logger.Warning(referenceId, fmt.Sprintf("WARNING - Users_Create_Conn - Unknown message type: %s", incoming.Type))
 			}

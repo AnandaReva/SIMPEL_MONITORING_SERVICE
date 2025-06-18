@@ -128,6 +128,12 @@ func initProcessMap() {
 		role:         []string{"system admin", "system master"},
 	}
 
+	prcsMap["get_user_activity_list"] = prcs{
+		userFunction: process.Get_User_Activity_List,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+
 	/// device processes
 	prcsMap["device_get_data"] = prcs{
 		deviceFunction: process.Device_Get_Data,

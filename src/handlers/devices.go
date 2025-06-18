@@ -183,14 +183,19 @@ func Device_Create_Conn(w http.ResponseWriter, r *http.Request) {
 				deviceClient := hub.Devices[wsConn]
 				hub.Mu.Unlock()
 
-				currAction, err := hub.GetDeviceAction(referenceId, deviceData.DeviceID)
+				// Replace the action check in Device_Create_Conn with:
+				currAction, err := hub.GetAndClearDeviceAction(referenceId, deviceData.DeviceID)
 				if err != nil {
-					logger.Error(referenceId, fmt.Sprintf("ERROR - Device_Create_Conn - Failed to get device action: %v", err))
+					logger.Error(referenceId, "Failed to get device action:", err)
 					continue
 				}
 
+				if currAction == nil {
+					continue // No action to process
+				}
+
 				actionType, ok := currAction["type"].(string)
-				if !ok || strings.TrimSpace(actionType) == "" {
+				if !ok {
 					continue
 				}
 
