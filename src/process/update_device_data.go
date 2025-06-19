@@ -370,7 +370,11 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		// 	return result
 		// }
 
-		hub.SetDeviceAction(referenceId, 123, newDeviceCredentials)
+		action := map[string]any{
+			"type":      "update",
+			"device_id": deviceIdInt,
+		}
+		hub.SetDeviceAction(referenceId, deviceIdInt, action)
 
 		logger.Debug(referenceId, "DEBUG - Update_Device_Data - Device action set to update for device ID:", deviceIdInt)
 	}
