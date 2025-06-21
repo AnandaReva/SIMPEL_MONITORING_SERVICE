@@ -281,17 +281,63 @@ func Users_Create_Conn(w http.ResponseWriter, r *http.Request) {
 				err := hub.RestartDevice(referenceId, incoming.DeviceID)
 				if err != nil {
 					logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to restart device ID %d: %v", incoming.DeviceID, err))
+
+					// Send error response to client
+					errMsg := map[string]any{
+						"type":      "restart_response",
+						"status":    "error",
+						"message":   fmt.Sprintf("Failed to restart device: %v", err),
+						"device_id": incoming.DeviceID,
+					}
+					if writeErr := userClient.SafeWriteJSON(errMsg); writeErr != nil {
+						logger.Error(referenceId, "ERROR - Failed to send restart error to client:", writeErr)
+					}
 					break
 				}
+
 				logger.Info(referenceId, fmt.Sprintf("INFO - Restart command sent to device ID %d", incoming.DeviceID))
+
+				// Send success response to client
+				successMsg := map[string]any{
+					"type":      "restart_response",
+					"status":    "success",
+					"message":   "Restart command successfully sent to device",
+					"device_id": incoming.DeviceID,
+				}
+				if writeErr := userClient.SafeWriteJSON(successMsg); writeErr != nil {
+					logger.Error(referenceId, "ERROR - Failed to send restart success message to client:", writeErr)
+				}
 
 			case "deep_sleep":
 				err := hub.DeepSleepDevice(referenceId, incoming.DeviceID)
 				if err != nil {
 					logger.Error(referenceId, fmt.Sprintf("ERROR - Failed to send deep sleep to device ID %d: %v", incoming.DeviceID, err))
+
+					// Send error response to client
+					errMsg := map[string]any{
+						"type":      "deep_sleep_response",
+						"status":    "error",
+						"message":   fmt.Sprintf("Failed to put device to deep sleep: %v", err),
+						"device_id": incoming.DeviceID,
+					}
+					if writeErr := userClient.SafeWriteJSON(errMsg); writeErr != nil {
+						logger.Error(referenceId, "ERROR - Failed to send deep sleep error to client:", writeErr)
+					}
 					break
 				}
+
 				logger.Info(referenceId, fmt.Sprintf("INFO - Deep sleep command sent to device ID %d", incoming.DeviceID))
+
+				// Send success response to client
+				successMsg := map[string]any{
+					"type":      "deep_sleep_response",
+					"status":    "success",
+					"message":   "Deep sleep command successfully sent to device",
+					"device_id": incoming.DeviceID,
+				}
+				if writeErr := userClient.SafeWriteJSON(successMsg); writeErr != nil {
+					logger.Error(referenceId, "ERROR - Failed to send deep sleep success message to client:", writeErr)
+				}
 
 			default:
 				logger.Warning(referenceId, fmt.Sprintf("WARNING - Users_Create_Conn - Unknown message type: %s", incoming.Type))

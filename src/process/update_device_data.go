@@ -336,14 +336,7 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 		return result
 	}
 
-	//immadiate device update
-
-	/* err = wsHub.SendMessageToDevice(referenceId,  deviceId, `{"type" : "update"}`)
-	if err != nil {
-		// Tangani error jika perangkat tidak ditemukan
-		logger.Error("Failed to send message to device:", err)
-	} */
-
+	
 	if deviceSt == 1 {
 		hub, err := pubsub.GetWebSocketHub(referenceId)
 		if err != nil {
@@ -353,27 +346,32 @@ func Update_Device_Data(referenceId string, conn *sqlx.DB, userID int64, role st
 			return result
 		}
 
-		// err = hub.SetDeviceAction(referenceId, deviceIdInt, "update")
-		// if err != nil {
-		// 	// Tangani error jika perangkat tidak ditemukan
-		// 	logger.Error(referenceId, "Failed to set device action:", err)
+		// periksa jika ada peerubahan password atau name maka masukkan ke new_credentials
 
-		// 	err = tx.Rollback()
-		// 	if err != nil {
-		// 		logger.Error(referenceId, "ERROR - Update_Device_Data - Failed to rollback transaction:", err)
-		// 	}
+		// Create new_credentials object if name or password is being updated
+		newCredentials := make(map[string]any)
 
-		// 	logger.Debug(referenceId, "DEBUG - Update_Device_Data - Rollback transaction")
+		// Check for password update
+		if newPassword, ok := changeFields["password"].(string); ok && newPassword != "" {
+			newCredentials["password"] = newPassword
+		}
 
-		// 	result.ErrorCode = "500006"
-		// 	result.ErrorMessage = "Internal server error"
-		// 	return result
-		// }
+		// Check for name update
+		if newName, ok := changeFields["name"].(string); ok && newName != "" {
+			newCredentials["name"] = newName
+		}
 
+		// Prepare action message
 		action := map[string]any{
 			"type":      "update",
 			"device_id": deviceIdInt,
 		}
+
+		// Only include new_credentials if there are actual changes
+		if len(newCredentials) > 0 {
+			action["new_credentials"] = newCredentials
+		}
+
 		hub.SetDeviceAction(referenceId, deviceIdInt, action)
 
 		logger.Debug(referenceId, "DEBUG - Update_Device_Data - Device action set to update for device ID:", deviceIdInt)

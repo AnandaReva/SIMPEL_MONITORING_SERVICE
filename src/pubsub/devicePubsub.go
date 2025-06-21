@@ -211,47 +211,6 @@ func (hub *WebSocketHub) GetAndClearDeviceAction(referenceId string, deviceID in
 	return nil, fmt.Errorf("device not found")
 }
 
-// SetDeviceAction sets an action for a connected device.
-// func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceId int64, newDeviceCredentials map[string]any) error {
-// 	hub.Mu.Lock()
-// 	defer hub.Mu.Unlock()
-
-// 	logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - Device ID: %d", deviceId))
-
-// 	// Cek apakah device terhubung
-// 	if conn, exists := hub.DeviceConn[deviceId]; exists {
-// 		client, ok := hub.Devices[conn]
-// 		if !ok {
-// 			return fmt.Errorf("device client not found in Devices map for device ID %d", deviceId)
-// 		}
-
-// 		// Susun payload action map
-// 		actionMap := map[string]any{
-// 			"type": "update", // default action type
-// 		}
-
-// 		// Tambahkan credential baru jika ada
-// 		newCreds := make(map[string]any)
-// 		if newName, ok := newDeviceCredentials["name"].(string); ok && strings.TrimSpace(newName) != "" {
-// 			newCreds["name"] = newName
-// 			logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - new name: %s", newName))
-// 		}
-// 		if newPwd, ok := newDeviceCredentials["password"].(string); ok && strings.TrimSpace(newPwd) != "" {
-// 			newCreds["password"] = newPwd
-// 			logger.Debug(referenceId, fmt.Sprintf("DEBUG - SetDeviceAction - new password: %s", newPwd))
-// 		}
-// 		if len(newCreds) > 0 {
-// 			actionMap["new_device_credentials"] = newCreds
-// 		}
-
-// 		// Set action map ke client
-// 		client.Action = actionMap
-// 		return nil
-// 	}
-
-// 	return fmt.Errorf("device with ID %d not found", deviceId)
-// }
-
 func (hub *WebSocketHub) SetDeviceAction(referenceId string, deviceId int64, action map[string]any) error {
 	hub.Mu.Lock()
 	defer hub.Mu.Unlock()
@@ -308,33 +267,6 @@ func (hub *WebSocketHub) GetActiveDevices(referenceId string, pageNumber int64, 
 	return devices[offset:endIndex]
 }
 
-// RestartDevice mengirimkan perintah restart ke device melalui WebSocket
-// func (hub *WebSocketHub) RestartDevice(referenceId string, deviceId int64) error {
-// 	hub.Mu.Lock()
-// 	conn, exists := hub.DeviceConn[deviceId]
-// 	if !exists {
-// 		hub.Mu.Unlock()
-// 		return fmt.Errorf("device with ID %d not found or not connected", deviceId)
-// 	}
-// 	device := hub.Devices[conn]
-// 	hub.Mu.Unlock()
-
-// 	action := map[string]any{
-// 		"type": "restart",
-// 	}
-
-// 	// Simpan action
-// 	device.Action = action
-
-// 	// Kirim ke WebSocket
-// 	if err := device.SafeWriteJSON(action); err != nil {
-// 		logger.Error(referenceId, fmt.Sprintf("ERROR - RestartDevice - Failed to send restart command to device %d: %v", deviceId, err))
-// 		return err
-// 	}
-
-// 	logger.Info(referenceId, fmt.Sprintf("INFO - RestartDevice - Restart command sent to device ID %d", deviceId))
-// 	return nil
-// }
 
 func (hub *WebSocketHub) RestartDevice(referenceId string, deviceId int64) error {
 	hub.Mu.Lock()
