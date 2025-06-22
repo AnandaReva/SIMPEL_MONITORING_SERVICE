@@ -138,30 +138,31 @@ func initProcessMap() {
 	prcsMap["device_get_data"] = prcs{
 		deviceFunction: process.Device_Get_Data,
 		class:          "device",
+		role:           []string{"system user", "system admin", "system master"},
 	}
 
 	// report processes
 	prcsMap["get_report_available_years"] = prcs{
 		userFunction: process.Get_Report_Available_Years,
 		class:        "user",
-		role:         []string{"system admin", "system master"},
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_report_year_detail"] = prcs{
 		userFunction: process.Get_Report_Year_Detail,
 		class:        "user",
-		role:         []string{"system admin", "system master"},
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_report_available_months_by_year"] = prcs{
 		userFunction: process.Get_Report_Available_Months_By_Year,
 		class:        "user",
-		role:         []string{"system admin", "system master"},
+		role:         []string{"system user", "system admin", "system master"},
 	}
 	prcsMap["get_report_month_detail"] = prcs{
 		userFunction: process.Get_Report_Month_Detail,
 		class:        "user",
-		role:         []string{"system admin", "system master"},
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	/* // report processes
@@ -190,26 +191,51 @@ func initProcessMap() {
 	prcsMap["get_report_available_day_dates_by_month"] = prcs{
 		userFunction: process.Get_Available_DayDates_By_Month,
 		class:        "user",
-		role:         []string{"system admin", "system master"},
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
 	prcsMap["get_report_available_hours_by_day_date"] = prcs{
 		userFunction: process.Get_Report_Available_Hours_By_Day_Date,
 		class:        "user",
-		role:         []string{"system admin", "system master"},
+		role:         []string{"system user", "system admin", "system master"},
 	}
 
-	// prcsMap["get_csv_month_data"] = prcs{
-	// 	userFunction: process.Get_Report_Month_List,
-	// 	class:        "user",
-	// 	role:         []string{"system admin", "system master"},
-	// }
+	////// ALL DEVICES //////
 
-	// prcsMap["get_csv_year_data"] = prcs{
-	// 	userFunction: process.Get_Csv_Year_Data,
-	// 	class:        "user",
-	// 	role:         []string{"system admin", "system master"},
-	// }
+	prcsMap["get_device_count"] = prcs{
+		userFunction: process.Get_Device_Count,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+
+	prcsMap["get_report_all_devices_available_years"] = prcs{
+		userFunction: process.Get_Report_All_Devices_Available_Years,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+
+	prcsMap["get_report_all_devices_year_detail"] = prcs{
+		userFunction: process.Get_Report_All_Devices_Year_Detail,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+	prcsMap["get_report_all_devices_available_months_by_year"] = prcs{
+		userFunction: process.Get_Report_All_Devices_Available_Months_By_Year,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+
+	prcsMap["get_report_all_devices_month_detail"] = prcs{
+		userFunction: process.Get_Report_All_Devices_Month_Detail,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
+
+	prcsMap["get_report_all_devices_available_day_date_by_month"] = prcs{
+		userFunction: process.Get_Report_All_Devices_Available_DayDates_By_Month,
+		class:        "user",
+		role:         []string{"system user", "system admin", "system master"},
+	}
 
 	InitPrcs = true
 }
@@ -256,6 +282,7 @@ func Process(w http.ResponseWriter, r *http.Request) {
 
 	prc, exists := prcsMap[processName]
 	if !exists {
+		logger.Warning(referenceId, "PROCESS - Warning - Process doesn't exists!")
 		utils.Response(w, utils.ResultFormat{ErrorCode: "400002", ErrorMessage: "Invalid request"})
 		return
 	}

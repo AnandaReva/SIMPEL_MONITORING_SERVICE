@@ -203,7 +203,7 @@ FROM monthly_stats;
 }
 
 // Helper function to convert interface{} to int
-func convertToInt(value interface{}) (int, bool) {
+func convertToInt(value any) (int, bool) {
 	switch v := value.(type) {
 	case int:
 		return v, true

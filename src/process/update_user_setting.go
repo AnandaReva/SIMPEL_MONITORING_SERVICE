@@ -45,11 +45,27 @@ func Update_User_Settings(referenceId string, conn *sqlx.DB, user_id int64, role
 		return result
 	}
 
+	// Mulai transaksi
+	tx, err := conn.Beginx()
+	if err != nil {
+		logger.Error(referenceId, "ERROR - Update_User_Settings - Failed to begin transaction:", err)
+		result.ErrorCode = "500001"
+		result.ErrorMessage = "Transaction start failed"
+		return result
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p) // lanjutkan panic setelah rollback
+		}
+	}()
+
 	// Ambil data lama dari database
 	var existingData map[string]any
 	querySelect := `SELECT data FROM sysuser."user" WHERE id = $1`
-	err := conn.Get(&existingData, querySelect, user_id)
+	err = tx.Get(&existingData, querySelect, user_id)
 	if err != nil {
+		tx.Rollback()
 		logger.Error(referenceId, "ERROR - Update_User_Settings - Failed to get existing data:", err)
 		result.ErrorCode = "500002"
 		result.ErrorMessage = "User not found"
@@ -62,6 +78,7 @@ func Update_User_Settings(referenceId string, conn *sqlx.DB, user_id int64, role
 	// Konversi hasil merge ke JSON string
 	jsonData, err := utils.MapToJSON(merged)
 	if err != nil {
+		tx.Rollback()
 		result.ErrorCode = "400002"
 		result.ErrorMessage = "Failed to convert change_fields"
 		return result
@@ -74,16 +91,37 @@ func Update_User_Settings(referenceId string, conn *sqlx.DB, user_id int64, role
 		SET data = $1, last_timestamp = $2
 		WHERE id = $3
 	`
-
-	_, err = conn.Exec(queryUpdate, jsonData, lastTimestamp, user_id)
+	_, err = tx.Exec(queryUpdate, jsonData, lastTimestamp, user_id)
 	if err != nil {
+		tx.Rollback()
 		logger.Error(referenceId, "ERROR - Update_User_Settings - Update failed:", err)
 		result.ErrorCode = "500003"
 		result.ErrorMessage = "Internal server error"
 		return result
 	}
 
+	// Ambil kembali data user yang baru
+	var newUserDetailedData map[string]any
+	queryToGetUserDetailData := `SELECT data FROM sysuser."user" WHERE id = $1`
+	err = tx.Get(&newUserDetailedData, queryToGetUserDetailData, user_id)
+	if err != nil {
+		tx.Rollback()
+		logger.Error(referenceId, "ERROR - Update_User_Settings - Failed to retrieve updated user data:", err)
+		result.ErrorCode = "500004"
+		result.ErrorMessage = "Failed to retrieve updated data"
+		return result
+	}
+
+	// Commit transaksi
+	if err = tx.Commit(); err != nil {
+		logger.Error(referenceId, "ERROR - Update_User_Settings - Commit failed:", err)
+		result.ErrorCode = "500005"
+		result.ErrorMessage = "Transaction commit failed"
+		return result
+	}
+
 	logger.Info(referenceId, "INFO - Update_User_Settings - Update success")
 	result.Payload["status"] = "success"
+	result.Payload["new_user_detailed_data"] = newUserDetailedData
 	return result
 }
